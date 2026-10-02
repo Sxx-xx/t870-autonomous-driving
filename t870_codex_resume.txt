@@ -1,0 +1,142 @@
+T870 Codex 대화 바로 재개
+==========================
+
+최종 갱신: 2026-09-13
+
+Codex 세션/대화 ID:
+  01a03db0-1ce4-7553-8d4b-eed0934562a5
+  (2026-08-31 현재 활성 세션 파일과 대조 확인 완료)
+
+재개 명령:
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+  codex resume 01a03db0-1ce4-7553-8d4b-eed0934562a5
+
+예비 명령(가장 최근 대화 재개):
+  codex resume --last
+
+새 대화로 시작된 경우 첫 요청:
+  t870_progress_2026-08-26.txt 파일을 전부 읽고 T870 작업을 이어서 진행해줘.
+
+최신 상세 진행 메모:
+  /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/t870_progress_2026-09-13.txt
+
+2026-09-13 미션 통합:
+  - mission.txt 명세의 미션 노드 9개 구현 및 install_t870 빌드 완료.
+  - 미션 Mux를 휴대폰 AUTO/GPS 입력 앞에 배치하여 MANUAL/STOP 안전 유지.
+  - GPS 경로 핫리로드, LiDAR/IMU 회피, ESTOP, LiDAR 확인 주차,
+    신호등/차선신호, webcam publisher 추가.
+  - 모든 미션 범위 비활성 및 parking_armed=false가 안전 기본값.
+  - 현장 설정법은 T870_MISSIONS.md 참조.
+
+2026-09-13 GPS 상대경로 최신 상태:
+  - 휴대폰 없이 startup_control_mode:=GPS,
+    require_operator_heartbeat:=false로 조종기 MANUAL/AUTO 운용 가능.
+  - 카메라 traffic stop은 기본적으로 GPS 모드를 차단하지 않게 수정.
+  - diqkf.csv 상대경로 시험속도 0.55 m/s, GPS 조향상한 0.12 rad.
+  - 이전 위치-only/heading-only 정렬 방식은 경로좌표 방향과 실제 차량 방향이
+    달라져 cross-track error가 최대 약 207 m까지 증가한 실패를 확인함.
+  - 최종 방식은 MANUAL로 0.30 m/s 이상 2~3 m 직진해 GPS course를 얻은 뒤
+    상대경로 좌표 전체를 그 방향으로 회전한다. 준비 전 AUTO 출력은 0.
+  - 준비 완료 로그: `Relative route rotated to measured startup course; ...`
+  - 최종 수정은 빌드 및 pytest 10개 통과했으나 실차 재검증 전.
+  - 이후 GPS AUTO 목표속도를 1.3889 m/s(5 km/h)로 상향.
+  - 메인 Arduino AUTO 전용 PI를 Kp=16, Ki=5, integral limit=10으로 추가.
+    MANUAL Kp=22, Ki=8은 유지.
+  - 2026-09-13 메인 Arduino `/dev/ttyACM0`에 최신 sketch_aug 업로드 완료.
+    flash 12764 bytes 쓰기 및 read-back 검증 성공.
+
+2026-09-13 Pure Pursuit/LAD 최신 상태:
+  - GPS AUTO 조향은 gps_path_follower_node.py의 Pure Pursuit 제어를 사용함.
+  - 속도별 LAD를 2 km/h 단위로 10 km/h까지 개별 조정 가능하게 구현:
+    2/4/6/8/10 km/h LAD 최신값 = 1.5/2.2/3.2/4.4/6.0 m.
+    10 km/h 직선 좌우진동 때문에 고속 LAD를 늘리고 저속 LAD는 코너 조기
+    진입 완화를 위해 낮춤. filter alpha=0.40, steering rate=0.60 rad/s.
+    `/gps/lookahead_distance` 진단 토픽 추가, pytest 19개/빌드 통과.
+    LAD는 각 속도 구간별 고정값을 사용하며 기준점 사이 선형 보간하지 않음.
+  - follower가 `gps_tracking_YYYYMMDD_HHMMSS.csv`를 자동 생성하도록 추가.
+    위치/속도/heading/waypoint/error/LAD/target/raw+filtered steer/상태 기록.
+  - 실제 2회 로그에서 heading-GPS course 중앙 오차 33.5도/26.8도 및 조향
+    포화 71.6%/83.9% 확인. 절대경로에서 raw IMU 대신 GPS course를 우선하도록
+    수정하고 course rate를 1.0 rad/s로 제한함. CSV에 heading_source 추가.
+    pytest 21개 및 빌드 통과, 실차 재검증 전.
+  - launch 인자: gps_lad_2kmh_m, gps_lad_4kmh_m, gps_lad_6kmh_m,
+    gps_lad_8kmh_m, gps_lad_10kmh_m.
+  - 10 km/h 명령은 gps_follow_speed_mps:=2.7778이며, 사용자 요청으로
+    launch 기본 GPS 목표속도도 10 km/h로 변경함.
+  - 전체 pytest 18개 통과, Python 문법검사 및 t870_control 빌드 성공.
+  - 새 LAD와 10 km/h Pure Pursuit는 실차 검증 전이므로 저속부터 시험 필요.
+  - 직각 코너를 완화한 `gps_recordings/diqkf_smooth.csv` 생성.
+    원본 diqkf.csv는 보존했으며 최대 방향 변화는 약 91.8도/m에서
+    7.15도/m로 감소. 실제 도로 경계와 저속 대조 후 사용해야 함.
+  - 덜 완만한 `diqkf_smooth_tighter.csv` 및 QGIS용
+    `diqkf_smooth_tighter_longitude_latitude.csv`도 생성함.
+  - 이후 새 경로 CSV 생성 시 longitude/latitude WGS84 버전을 항상 함께 만든다.
+  - QGIS 최종 수정본 `gps_recordings/1.csv`(WGS84, 877점)를 GPS tracking
+    기본 경로로 적용. follower가 lon/lat CSV를 UTM zone 52N으로 자동 변환함.
+  - waypoint jump 방지: 최초만 전역 검색, 이후 뒤 5/앞 30점 지역 검색,
+    한 tick 최대 10점 전진. GPS jump는 3 m + 6 m/s*dt 초과 시 거부하고
+    연속 이상은 기존 timeout 정지. E-stop 코드는 변경하지 않음.
+  - pytest 24개 및 t870_control 빌드 통과, 실차 재검증 전.
+
+미션 시스템 인수인계 기준 문서:
+  /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/mission.txt
+  - GPS 미션 구역, 미션 Mux 우선순위, 9개 미션/카메라 노드 명세 포함
+  - 문서에 기재된 신규 미션 노드는 2026-09-13 현재
+    src/t870_control/t870_control에 구현 및 install_t870 빌드 완료.
+
+현재 요약(2026-09-12):
+  - 리시버 단절 급정지 강화 및 메인/보조 보드 업로드 완료:
+    보조 RC timeout 120 ms, 메인 I2C timeout 150 ms.
+  - 단절 시 메인 emergencyStopDrive()가 감속 램프를 우회해 DRIVE_PWM=0을
+    계속 강제한다. 재연결 후 1초 정지 및 MANUAL 중립 재확인은 유지된다.
+  - 2026-09-12 컴파일 및 업로드 모두 성공.
+    메인 일련번호 34331323136351211280,
+    보조 일련번호 24238313635351910130.
+  - 최종 펌웨어 파일:
+    메인 sketch_aug/sketch_aug.ino,
+    보조 pwm_receiver_bridge/pwm_receiver_bridge.ino.
+  - 실차 재배선은 보조 USB 제거 후 메인 5V/GND/A4/A5 연결.
+  - 남은 확인: 안전하게 바퀴를 띄운 상태에서 조종기 전원을 껐을 때
+    120~150 ms 내 구동/조향 출력이 실제로 차단되는지 시험.
+  - 2026-09-11 Arduino STEER-STALL 감지 비활성화 및 보드 업로드 완료
+  - POT fault, 조향 소프트 리밋, Pixhawk PWM 단절 보호는 유지
+  - GPS PATH/MANUAL/Arduino 속도 제한을 10 km/h(2.78 m/s)로 상향
+  - RRT 장애물 회피 속도 0.25 m/s는 유지
+  - 시스템 MAVROS와 install_t870 MAVROS ABI 충돌 확인
+  - MAVROS 실행 전 overlay 환경변수 unset 필요
+  - Arduino IDE/시리얼 모니터 포트 점유 해제 후 전체 구동 정상 확인
+  - ROS 기본 구동 실차 성공: 전진, 후진, 좌회전, 우회전, 전진 조향
+  - 명령 종료 시 구동 정지 및 조향 중앙 복귀 확인
+  - MAVROS system_id=255 필수(Pixhawk MAV_GCS_SYSID=255)
+  - 최종 조향 부호: +angular.z=우회전, -angular.z=좌회전
+  - Arduino PI 속도제어와 ROS USB 시리얼 구동 정상
+  - Pixhawk 3D 가속도계 보정 완료
+  - GPS/IST8310 미도착: COMPASS_ENABLE=0은 임시 설정
+  - GPS 도착 시 COMPASS_ENABLE=1 복원 후 외장 나침반 보정 필수
+  - 휴대폰 AUTO/STOP/MANUAL 원격제어 및 LiDAR/RRT 실내 우회시험 진행
+  - AUTO 0.15m/s, E-stop 0.50m/정면 좌우 각각 60도
+  - MANUAL 장애물 E-stop 탈출: 전진 차단, 후진/조향 허용 구현
+  - 다음 우선 작업: 새 MANUAL E-stop 탈출 동작 실차 검증
+  - 다음 안전 작업: PWM, USB, MAVROS, cmd_vel 단절 정지시험
+  - 실외 고속 직진 중앙값 확인 및 POT_AT_CENTER 보정은 후순위
+  - C920e LaneNet ROS2 미리보기 및 /cmd_vel/lane AUTO 연결 구현
+  - 차선 AUTO 현재 설정: 목표 0.30m/s, 최대 조향 0.18, 누락 유지 0.8초
+  - C920 USB 단절 시 0 명령 유지 및 자동 재연결 구현
+  - 야외에서 왼쪽 차선은 비교적 안정적이나 오른쪽 차선이 조각나고
+    보도블록/팔을 오인하여 빨간 목표 경로가 중앙에서 벗어나는 문제 미해결
+  - 좌측 색상선 + 우측 LaneNet 조각 정렬 혼합 검출 구현/빌드 완료
+  - 최신 야외 저장 프레임 hybrid_pair confidence=0.76, 중앙 경로 이동 확인
+  - 차선 테스트 2개/패키지 전체 테스트 5개 통과, 실시간·실차 검증은 보류
+  - C920 자동 장치탐색, 진단 저장, lane_source 토픽, 차선 통합 launch 구현
+
+주요 파일:
+  Arduino:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/sketch_aug/sketch_aug.ino
+  ROS 조향:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/src/t870_control/t870_control/pixhawk_vehicle_interface_node.py
+  ROS 전후진:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/src/t870_control/t870_control/arduino_drive_node.py
+  통합 launch:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/src/t870_control/launch/t870_autonomy.launch.py
+  실내 LiDAR 통합 launch:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/src/t870_control/launch/t870_indoor_lidar.launch.py

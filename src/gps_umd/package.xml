@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>gps_umd</name>
+  <version>0.3.2</version>
+  <description>gps_umd metapackage</description>
+
+  <maintainer email="ken@tossell.net">Ken Tossell</maintainer>
+  <maintainer email="preed@swri.org">P. J. Reed</maintainer>
+
+  <license>BSD</license>
+
+  <url type="website">http://ros.org/wiki/gps_umd</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_type>ament_cmake</build_type>
+
+  <exec_depend>gpsd_client</exec_depend>
+  <exec_depend>gps_common</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

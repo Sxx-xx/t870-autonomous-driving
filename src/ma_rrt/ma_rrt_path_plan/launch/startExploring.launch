@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+    <node pkg="ma_rrt_path_plan" type="main.py" name="ma_rrt_path_plan_node" output="screen">
+        <param name="desiredWaypointsFrequency" value="5" type="int" />
+
+        <!-- TODO: Comment me out -->
+        <!-- <param name="odom_topic" value="/odometry/real"/>
+        <param name="world_frame" value="map"/> -->
+
+        <param name="publishWaypoints" type="bool" value="true" />
+
+    </node>
+    <node pkg="ma_rrt_path_plan" type="track.py" name="erp42_location" output="screen">
+    </node>
+
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ma_rrt_path_plan)/rviz/innovation.rviz" output="screen" />
+    
+    <!--<node pkg="ma_rrt_path_plan" type="ERP42_status1.py" name="erp42_status" output="screen">
+  </node>-->
+</launch>

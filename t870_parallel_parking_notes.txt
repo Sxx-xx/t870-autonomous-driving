@@ -1,0 +1,87 @@
+===============================================================================
+T870 평행주차 최종 성공 기준
+===============================================================================
+최종 확인: 2026-09-19 (Asia/Seoul)
+작업공간: /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+
+1. 자동 경로 선택
+-------------------------------------------------------------------------------
+- 실행 launch: t870_parallel_parking.launch.py
+- 기본 접근 경로: gps_recordings/p_a.csv
+- LiDAR 감지됨: p_a.csv 선택
+- LiDAR 미감지: p_b.csv 선택
+- 관찰 웨이포인트: WP4
+- 최종 선택: WP5 진입 시 한 번만 확정하고 잠금
+- 차량 정면 기준 감지 각도: -15 ~ +15 deg (LiDAR raw 165 ~ 195 deg)
+- 감지 거리: 0.05 ~ 5.5 m
+- 한 스캔 최소 감지점: 8개
+- LiDAR 전방 기준각: 180 deg
+- RViz 필터와 selector가 같은 각도/거리 창을 사용한다.
+
+2. GPS 경로
+-------------------------------------------------------------------------------
+- p_a.csv: 감지됐을 때 선택
+  - target_speed: 전 구간 0.560 m/s
+  - cusp: WP18, WP23
+  - 자동 후진 구간: WP19~23
+- p_b.csv: 미감지일 때 선택
+  - 2026-09-19 새로 기록한 32점 경로(WP0~31)
+  - target_speed: 전 구간 0.560 m/s
+  - cusp: WP12, WP19
+  - 자동 후진 구간: WP13~19
+
+자동 선택 launch에서는 p_a와 p_b의 전환 WP가 다르므로
+gps_reverse_start_waypoint=-1, gps_reverse_stop_waypoint=-1을 사용하고 각 CSV의
+cusp를 자동 판정한다.
+
+3. 방향 전환 안전 로직
+-------------------------------------------------------------------------------
+- 전진/후진 방향을 바꿀 때마다 /t870/shift_estop=True를 발행한다.
+- Arduino bridge는 펌웨어에 E 명령을 보내 모터 PWM을 즉시 차단한다.
+- 조향은 전환 첫 틱부터 0으로 강제한다.
+- E-stop 최소 유지시간: 0.3초
+- 엔코더 절대속도 0.15 m/s 이하를 확인해야 새 방향으로 출발한다.
+- 후진 run은 종료 cusp까지 래치하여 전환 직후 다시 전진으로 돌아가지 않는다.
+- 후진 종료 후 정차 유지시간: 1.0초
+
+4. 추종 설정
+-------------------------------------------------------------------------------
+- 주행속도: 0.56 m/s (약 2 km/h)
+- 후진 LAD: 1.0 m
+- 후진 조향 반전: true
+- cusp brake distance: 0.35 m
+- 최대 조향: 0.20 rad
+- 일반 LiDAR safety: false
+- mission stack: false
+- lane preview: false
+
+5. 실행 코드
+-------------------------------------------------------------------------------
+MAVROS는 시스템 설치본만 사용하며 별도 터미널에서 먼저 실행한다.
+
+평행주차 자동 선택 launch:
+
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export PYTHONUNBUFFERED=1
+  export ROS_LOG_DIR=/tmp/ros_t870_logs
+  ros2 launch t870_control t870_parallel_parking.launch.py \
+    2>&1 | tee /tmp/t870_parallel_parking.log
+
+웹 제어 화면에서 GPS PATH를 선택하면 출발한다.
+
+6. 정상 로그
+-------------------------------------------------------------------------------
+감지 시:
+  blocked_zone=B, select_zone=A, path=.../p_a.csv
+
+미감지 시:
+  blocked_zone=A, select_zone=B, path=.../p_b.csv
+
+방향 전환 시:
+  Shift E-stop ACTIVE at waypoint ...
+  Shift E-stop complete at waypoint ...; starting REVERSE/FORWARD

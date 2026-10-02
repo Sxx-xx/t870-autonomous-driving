@@ -1,0 +1,1249 @@
+T870 제작 및 자율주행 진행 상황
+================================
+
+최초 정리: 2026-08-26
+최종 갱신: 2026-09-03
+최종 코드 반영 상태: 카메라/차선 구현 및 빌드 완료, 실시간·실차 검증 대기
+작업 경로: /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+기준 차량: Henes Broon T870
+제어기: Pixhawk 6C Pro + Arduino Uno
+
+
+0. Codex 대화 재개 정보
+-----------------------
+
+  Codex 세션/대화 ID:
+    01a03db0-1ce4-7553-8d4b-eed0934562a5
+    (2026-08-31 현재 활성 세션 파일과 대조 확인 완료)
+
+  터미널에서 현재 대화를 그대로 재개:
+    cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+    codex resume 01a03db0-1ce4-7553-8d4b-eed0934562a5
+
+  최근 세션 선택 방식의 예비 명령:
+    codex resume --last
+
+  Codex가 새 대화로 열렸다면 가장 먼저 이 파일 전체를 읽도록 요청:
+    /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/t870_progress_2026-08-26.txt
+
+  현재 핵심 상태(2026-08-31):
+    - ROS 전진/후진/좌회전/우회전 및 복합 조향 실차 성공
+    - MAVROS는 system_id=255로 실행해야 Pixhawk RC Override가 적용됨
+    - 최종 ROS 조향 규칙: +angular.z=우회전, -angular.z=좌회전
+    - Pixhawk 3D 가속도계 보정 완료
+    - GPS/IST8310 미도착으로 COMPASS_ENABLE=0 임시 설정
+    - GPS 도착 후 COMPASS_ENABLE=1 복원과 나침반 보정 필수
+    - 휴대폰 AUTO/STOP/MANUAL 원격제어와 LiDAR/RRT 실내 통합시험 진행
+    - 장애물 E-stop에서 MANUAL 후진/조향 탈출 기능 구현, 실차 검증은 다음 작업
+    - 실외 속도 상향 및 실제 직진 중앙값 보정은 후순위
+
+
+1. 현재 목표 구성
+-----------------
+
+  [Pixhawk IMU / IST8310 / F9P]
+                  |
+                  v
+             MAVROS / ROS 2
+                  |
+      RPLIDAR -> MaRRT 경로계획
+                  |
+             Pure Pursuit
+                  |
+               /cmd_vel
+              /         \
+             v           v
+  Pixhawk CH1 PWM      USB 시리얼
+    (조향 목표)        (목표 속도)
+             \           /
+              v         v
+               Arduino Uno
+              /           \
+             v             v
+    MD20A 조향모터     MDD20A 구동모터
+    + 포텐셔미터       + 구동 엔코더
+
+
+2. 실차에서 확정한 배선 기준
+----------------------------
+
+2.1 Pixhawk -> Arduino
+
+  B-Cube FMU PWM OUT 1의 S(신호) -> Arduino D8
+  B-Cube FMU PWM OUT 1의 GND     -> Arduino GND
+  B-Cube FMU PWM OUT 1의 +       -> 연결하지 않음
+
+  현재 CH1 신호선과 GND 연결 완료.
+
+
+2.2 Arduino 핀 배치
+
+  D2  : 구동 엔코더 A상
+  D3  : 구동 엔코더 B상
+  D7  : 조향 MD20A DIR
+  D8  : Pixhawk CH1 PWM 입력
+  D9  : 조향 MD20A PWM
+  D10 : 구동 MDD20A PWM1
+  D11 : 구동 MDD20A DIR1
+  A0  : 조향 포텐셔미터 와이퍼
+
+
+2.3 구동 MDD20A 및 엔코더 색상
+
+  MDD20A M1A : 노란색 구동모터선
+  MDD20A M1B : 파란색 구동모터선
+
+  엔코더 초록색 A상 -> Arduino D2
+  엔코더 파란색 B상 -> Arduino D3
+
+  위 배선에서 차량 전진 시 엔코더 카운트가 양수로 증가하는 것을 확인함.
+  따라서 Arduino 코드의 ENCODER_SIGN = 1이 맞음.
+
+  2026-08-27 실제 명령 시험으로 확정한 방향:
+    DIR HIGH = 전진
+    DIR LOW  = 후진
+
+  전진할 때 엔코더 카운트는 양수,
+  후진할 때 엔코더 카운트는 음수로 들어오는 것을 확인함.
+
+
+2.4 조향 MD20A 및 포텐셔미터
+
+  MD20A MA : 초록색 조향모터선
+  MD20A MB : 흰색 조향모터선
+
+  실차 버튼 확인:
+    MA 버튼 = 우회전
+    MB 버튼 = 좌회전
+
+  포텐셔미터 확인:
+    좌회전할수록 측정값 감소
+    우회전할수록 측정값 증가
+
+  측정 기준값:
+    좌측 끝 = 약 40
+    중앙    = 약 485
+    우측 끝 = 약 984
+
+  소프트 제한:
+    좌측 = 55
+    우측 = 969
+
+  Arduino 코드 방향 기준:
+    DIR LOW  = MA = 우회전 = POT 값 증가
+    DIR HIGH = MB = 좌회전 = POT 값 감소
+
+
+3. Arduino 코드 진행 상황
+-------------------------
+
+파일:
+  sketch_aug/sketch_aug.ino
+
+완료 또는 구현된 항목:
+
+  [완료] 조향 포텐셔미터 위치 읽기
+  [완료] 중앙 복귀 위치 제어
+  [완료] 조향 좌우 소프트 리밋
+  [완료] 포텐셔미터 단선/단락 고장 감지
+  [완료] 조향 스톨 감지 및 정지 래치
+  [완료] 조향 개루프 시험 명령(s 명령)
+  [완료] 구동 엔코더 카운트
+  [완료] 엔코더 기반 속도 계산
+  [완료] 구동 속도 PI 제어
+  [완료] 전진/후진 방향 반전 보호
+  [완료] 속도 소프트 스타트/감속 램프
+  [완료] 명령 워치독
+  [완료] 구동 개루프 시험 명령(p 명령)
+  [완료] 오늘 확인한 모터선 색상과 방향을 코드 주석에 기록
+  [완료] 조향 방향을 실측값에 맞게 수정
+  [완료] 엔코더 전진 부호 ENCODER_SIGN = 1 확인
+  [완료] D8 핀 체인지 인터럽트로 Pixhawk PWM 펄스폭 캡처
+  [완료] Pixhawk 1100/1500/1900us를 좌/중앙/우 POT 목표로 변환
+  [완료] Pixhawk PWM 150ms 이상 단절 시 조향모터 즉시 정지
+  [완료] Pixhawk PWM 및 계산된 조향 목표 시리얼 상태 출력
+  [완료] Pixhawk 중앙 1500us 수신 및 중앙 목표 485 계산 확인
+  [완료] 모터 전원 없이 좌우 드라이런 판단 확인
+  [완료] 실제 조향모터 전원 인가 및 좌/우/중앙 위치 제어 확인
+  [완료] 조향 스톨 래치와 r 명령 해제 동작 확인
+  [완료] 구동 방향을 실차 결과에 맞게 HIGH=전진, LOW=후진으로 수정
+  [완료] 구동 최소 연속 PWM 실측: p5에서도 연속 회전
+  [완료] DRIVE_MIN_PWM을 45에서 5로 수정해 저속 펄스 현상 제거
+  [완료] 바퀴 10회전 약 1498 counts 측정
+  [완료] COUNTS_PER_REV를 149.8로 보정
+  [완료] 전진 +0.3 km/h 속도 PI 시험
+         실제 +0.27~+0.34, PWM 약 10, count/100ms 약 +2
+  [완료] 후진 -0.3 km/h 속도 PI 시험
+         실제 -0.27~-0.34, PWM 약 8, count/100ms 약 -1~-2
+  [완료] 전후진 모두 모터 연속 회전 및 목표 속도 수렴 확인
+  [완료] 지면 부하 개루프 시험: p10 약 0.20 km/h, p15 약 0.48 km/h
+  [완료] 지면 부하 측정값을 반영한 피드포워드 적용
+         FF_OFFSET=6.4, FF_GAIN=17.9
+  [완료] 지면 부하에서 0.2 km/h 목표 추종 확인
+         실제 속도 약 0.2 km/h, PWM 약 10, count/100ms 약 1
+  [완료] 명령 워치독을 짧은 지상시험용으로 3000ms로 조정
+
+미완료 또는 실측 필요 항목:
+
+  [선택 작업] 더 넓은 속도 범위와 탑승 부하에서 FF/PI 정밀 튜닝
+  [후순위/실외] 현재 조향 중앙값 POT 485가 실제 바퀴 직진각과 정확히
+                일치하는지 충분한 직진거리와 속도로 주행해 확인
+  [후순위/조정 가능] 차량이 한쪽으로 흐르면 실제 기계적 중앙 POT 값을
+                     다시 측정해 POT_AT_CENTER 및 PWM 1500 목표 보정
+  [미완료] Pixhawk 좌/우 끝 명령에서 실제 최대 조향각 최종 확인
+  [미완료] Pixhawk PWM 단절 시 실제 조향모터 정지 시험
+  [미구현] D12 모드 스위치 입력
+  [미구현] A1 배터리 전압 감시
+
+
+4. ROS 2 및 Pixhawk 소프트웨어 진행 상황
+----------------------------------------
+
+구현된 소스 코드:
+
+  [구현] ROS 2 Jazzy용 MAVROS 및 mavros_msgs
+  [구현] Pixhawk IMU/EKF/GNSS 데이터 사용 구조
+  [구현] RPLIDAR C1 ROS 2 드라이버
+  [구현] base_link -> laser 정적 TF
+  [구현] MaRRT 장애물 회피 경로계획
+  [구현] /waypoints 및 /rrt_path 발행
+  [구현] RTK/EKF/센서 상태 기반 안전 gate
+  [구현] T870 축거 1.08m 기반 Pure Pursuit
+  [구현] 속도 PID 및 /cmd_vel 출력
+  [구현] LiDAR 전방 장애물 E-Stop
+  [구현] /scan 및 /cmd_vel watchdog
+  [구현] Pixhawk RC override CH1 조향 전용 인터페이스
+  [구현] /cmd_vel.linear.x -> Arduino USB 시리얼 전후진 노드
+  [구현] ROS m/s 명령을 Arduino km/h 명령으로 변환(3.6배)
+  [구현] Arduino 전후진 최대속도 +/-2.0 km/h 제한
+  [구현] /cmd_vel 0.5초 타임아웃 시 Arduino에 0 명령
+  [구현] E-stop 신호 0.5초 타임아웃 또는 true일 때 안전정지
+         단, 장애물 E-stop + MANUAL + 센서/명령 정상일 때만 후진/조향 탈출 허용
+  [구현] Arduino 시리얼 자동 재연결 및 종료 시 0 명령 3회 전송
+  [구현] /t870/arduino_drive_command_kmh 상태 토픽
+  [구현] 자율주행 통합 launch 소스
+  [완료] 노트북 시스템 MAVROS로 Pixhawk USB 연결 확인
+  [완료] ArduRover 4.7.0 및 Pixhawk 6C Pro 식별
+  [완료] MAVROS RC override CH1 -> Pixhawk -> Arduino D8 경로 확인
+  [완료] FMU PWM OUT 1에 대응하는 SERVO9 설정
+         SERVO9_FUNCTION=26 (Ground Steering)
+         SERVO9_MIN=1100, SERVO9_TRIM=1500, SERVO9_MAX=1900
+  [완료] Pixhawk 인터페이스에서 기존 CH3 구동 출력 제거
+  [완료] 통합 launch에 arduino_drive_node 추가
+  [완료] Arduino 고정 by-id 경로를 launch 기본값으로 적용
+  [완료] ROS -> Arduino 지상 저속 전진/후진 연결시험
+         +0.06 m/s -> +0.216 km/h 전진 정상
+         -0.06 m/s -> -0.216 km/h 후진 정상
+  [완료] ROS 직진 통합시험: Pixhawk/MAVROS와 Arduino 동시 실행 상태에서 전진 정상
+  [완료] E-stop 상태 변경 시 인터페이스 노드가 종료되던 로거 오류 수정
+  [완료] MAVROS Odometry 구독 QoS를 sensor-data QoS로 수정
+  [완료] ROS angular.z -> MAVROS -> Pixhawk -> Arduino D8 조향 통합 경로 확인
+  [완료] MAVROS system_id 불일치 원인 확인 및 255 설정
+         Pixhawk MAV_GCS_SYSID=255인데 기존 MAVROS system_id=1이라
+         RC Override가 토픽에는 보이지만 Pixhawk 출력에 적용되지 않았음
+  [완료] MAVROS system_id=255 상태에서 RC Override CH1 1786 입력 시
+         SERVO9 실제 출력 약 1776 확인
+  [완료] ROS 조향 방향 실측 및 최종 코드 수정
+         최종: angular.z + = 우회전, angular.z - = 좌회전
+         reverse_steering_output=false 파라미터 기본 적용
+  [완료] ROS 조향 명령 종료 시 SERVO9 1500 및 실제 중앙 복귀 확인
+  [완료] 실제 모터 전원 상태에서 ROS 좌/우 조향 확인
+  [완료] 저속 전진+우회전 통합시험
+         linear.x=+0.10 m/s, angular.z=+0.15 rad/s 정상
+  [완료] 저속 전진+좌회전 통합시험
+         linear.x=+0.10 m/s, angular.z=-0.15 rad/s 정상
+  [완료] 통합시험 명령 종료 후 구동 정지와 조향 중앙 복귀 확인
+  [후순위/실외] 명령 종료 후 복귀하는 PWM 1500/POT 485 위치가
+                육안 중앙이 아닌 실제 직진 주행 중앙인지 최종 확인
+
+현재 미완료 또는 재시험이 필요한 부분:
+
+  [주의] install_t870 내부 MAVROS 실행 파일은 현재 ROS Jazzy와 ABI 불일치
+         symbol lookup error가 발생하므로 MAVROS 터미널에서는
+         /opt/ros/jazzy/setup.bash만 source하여 시스템 MAVROS를 사용해야 함
+  [미완료] 고정 별칭(/dev/arduino_t870 등)을 만드는 별도 udev 규칙
+  [미완료] 전체 autonomy launch 실차 실행 및 자동시험
+  [완료] Pixhawk 3D 가속도계 보정
+  [대기] GPS/IST8310 배송 후 외장 나침반 장착 및 보정
+  [임시 설정] GPS/IST8310 미장착 벤치시험을 위해 COMPASS_ENABLE=0
+              GPS 도착 후 반드시 COMPASS_ENABLE=1 복원 및 보정 필요
+  [미완료] RC 미사용 구성에 맞는 Radio failsafe 방침 확정
+
+
+5. 빌드 및 설치 상태
+--------------------
+
+과거 확인 결과:
+
+  - MAVROS, mavros_extras, sllidar_ros2, 경로계획 및 추종 패키지가
+    build_t870 / install_t870 공간에서 빌드된 기록이 있음.
+  - 2026-08-06 기준 9개 대상 패키지 빌드 성공 기록이 있음.
+
+2026-08-27 확인 결과:
+
+  - t870_control을 build_t870 / install_t870에 symlink-install로 재빌드 완료.
+  - arduino_drive_node 실행 파일 설치 확인.
+  - pixhawk_vehicle_interface_node 최신 소스 설치 확인.
+  - 속도 변환 및 PWM 변환 단위 테스트 3개 통과.
+  - launch 인자에 Arduino by-id, baud 115200, 최대 2.0 km/h 반영 확인.
+  - 시스템 MAVROS(/opt/ros/jazzy)는 Pixhawk USB 연결에 사용 가능.
+  - install_t870에 포함된 과거 MAVROS 바이너리는 ABI 오류로 사용 불가.
+
+2026-08-29 확인 결과:
+
+  - QGroundControl 5.1 공식 x86_64 AppImage 설치 완료.
+    위치: /home/sxx/Applications/QGroundControl-x86_64.AppImage
+  - Pixhawk 3D 가속도계 보정 완료, 재부팅 후 PreArm 오류 해제 확인.
+  - RC 미사용 시험을 위해 FS_THR_ENABLE=0 적용.
+  - GPS/IST8310 미도착으로 COMPASS_ENABLE=0 임시 적용.
+  - MAVROS 송신 system_id=255 적용 후 RC Override 정상 출력 확인.
+  - t870_control 조향 부호 수정 후 단위 테스트 3개 통과 및 재빌드 완료.
+  - ROS 전후진·좌회전·우회전·전진 조향 실차 통합시험 성공.
+
+  시스템 MAVROS 실행 시 필요한 통신 환경:
+    ROS_DOMAIN_ID=0
+    ROS_LOCALHOST_ONLY=1
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+  현재 검증된 MAVROS 설정:
+    system_id=255
+    component_id=191
+    target_system_id=1
+    target_component_id=1
+
+  주의:
+    긴 by-id 경로를 터미널에 붙여넣을 때 문자열이 usb-에서 잘린 적이 있음.
+    당시 Pixhawk는 /dev/ttyACM1이었으며 짧은 포트 경로로 정상 연결함.
+    USB 재연결 시 ttyACM 번호는 바뀔 수 있으므로 by-id 또는 ls로 재확인 필요.
+
+
+6. 하드웨어 및 안전장치 진행 상황
+---------------------------------
+
+완료 또는 확인:
+
+  [완료] Pixhawk CH1 Signal -> Arduino D8 배선
+  [완료] Pixhawk CH1 GND -> Arduino GND 배선
+  [확인] Pixhawk PWM + 전원핀은 Arduino에 연결하지 않음
+  [확인] 조향 모터선 색상과 실제 좌우 방향
+  [확인] 구동 모터선 색상
+  [확인] 엔코더 A/B 색상 및 전진 양수 방향
+  [완료] B-Cube FMU PWM 1 -> Arduino D8 실제 PWM 수신
+  [완료] Pixhawk 외장 안전 버튼 잠금/해제 및 PWM 차단 확인
+  [완료] 조향모터 전원 인가 상태에서 Pixhawk 위치 제어 확인
+  [완료] 구동모터 전원 인가 상태에서 전진/후진 연속 회전 확인
+  [완료] 차량을 지면에 둔 상태에서 ROS 저속 전진/후진 확인
+  [완료] Arduino stable by-id 확인
+         usb-Arduino__www.arduino.cc__0043_34331323136351211280-if00
+  [완료] Pixhawk stable by-id 확인
+         usb-Holybro_Pixhawk6C_45002F001451333531373234-if00
+  [완료] 실제 모터 전원 상태에서 ROS 조향 좌/우 및 중앙 복귀 확인
+  [완료] 실제 지상에서 전진+좌회전 및 전진+우회전 확인
+
+필요 작업:
+
+  [필요] 배터리 가까이에 메인 퓨즈 설치
+  [권장 시작값] 조향 MD20A 분기 15A 자동차용 퓨즈
+  [권장 시작값] 구동 MDD20A 분기 20A 자동차용 퓨즈
+  [권장 시작값] Arduino/Pixhawk 제어 전원 분기 2~3A 퓨즈
+  [권장 시작값] 전체 메인 퓨즈 30A
+  [필요] 실제 정상전류/시동전류/스톨전류 측정 후 퓨즈 재선정
+  [필요] 전선 굵기가 퓨즈 정격을 안전하게 견디는지 확인
+  [필요] 비상정지 스위치 설치 및 동작 시험
+  [필요] STM32 출력과 MD20A/MDD20A 출력이 병렬 연결되지 않았는지 확인
+
+
+7. 앞으로 필요한 실차 시험
+---------------------------
+
+  [미완료] Pixhawk 좌/우 끝 PWM에서 최대 조향 위치 최종 시험
+  [미완료] Pixhawk PWM 케이블 분리 시 조향모터 즉시 정지 시험
+  [미완료] Arduino USB 분리/ROS 종료 시 구동모터 정지 시험
+  [완료] 지면 부하 상태에서 저속 전진 시험
+  [완료] 지면 부하 상태에서 저속 후진 시험
+  [완료] ROS 종료 또는 /cmd_vel 중단 시 0.5초 명령 타임아웃 정지 확인
+  [완료] ROS 전진+좌회전 및 전진+우회전 통합시험
+  [완료] /mavros/rc/override CH1과 /mavros/rc/out 출력 확인
+  [후순위/실외] angular.z=0 직진 주행에서 좌우 쏠림 확인 및 조향 중앙값 보정
+  [진행중] 저속 폐쇄구간 RRT 장애물 우회 주행 시험
+  [완료] LiDAR E-Stop 실제 정지 시험
+  [미완료] F9P RTK FIXED 및 Pixhawk EKF 상태 확인
+  [미완료] LiDAR 장착 위치와 yaw 실측
+  [중요/재측정 필요] 현재 LiDAR 위치는 최종 확정된 장착 위치가 아님.
+    - 2026-08-31 임시 측정값: 차량 전체 폭 78cm
+    - 임시 LiDAR 기준 좌측 끝 38cm, 우측 끝 38cm
+    - 임시 LiDAR 기준 차량 전방 끝 5cm
+    - 위 수치는 현재 실내시험용 장애물 여유 설정에만 사용
+    - LiDAR 최종 고정 후 좌/우/앞/뒤 오프셋과 장착 yaw를 다시 실측하고
+      RRT 차체 폭, 장애물 팽창 반경, self-filter 및 TF 값을 재설정할 것
+  [미완료] Pure Pursuit, PID, RRT 파라미터 실차 튜닝
+
+
+8. 다음 작업 권장 순서
+----------------------
+
+  1) MAVROS system_id=255 설정을 통합 launch에 영구 반영
+  2) MAVROS/조향/Arduino 노드를 한 번에 실행하는 launch 정리
+  3) Pixhawk PWM 단절 및 /cmd_vel 중단 안전정지 시험
+  4) Arduino USB 분리와 MAVROS 종료 안전정지 시험
+  5) 퓨즈/물리 비상정지 설치와 실제 정지 동작 확인
+  6) install_t870의 오래된 MAVROS 격리 또는 시스템 MAVROS 기준 정리
+  7) GPS/IST8310 도착 후 COMPASS_ENABLE=1 복원 및 나침반 보정
+  8) [완료] LiDAR E-Stop 실제 정지 시험
+  9) F9P RTK FIXED 및 Pixhawk EKF 상태 확인
+ 10) LiDAR 장착 transform 실측
+ 11) Pixhawk 좌/우 끝 최대 조향 위치 최종 시험
+ 12) [실외 후순위] 속도를 높인 angular.z=0 직진 주행으로 중앙값 재확인
+ 13) [실외 후순위] 좌우 쏠림 시 POT_AT_CENTER(현재 485) 재측정 및 보정
+ 14) [실외 후순위] 폐쇄구간 RRT/Pure Pursuit/속도 제어 최종 튜닝
+
+
+9. 현재 결론
+-------------
+
+Pixhawk 조향 PWM 출력부터 Arduino D8 입력, 포텐셔미터 위치 피드백,
+MD20A 실제 조향모터 구동까지 전체 조향 경로가 정상 동작하는 것을 확인했다.
+SERVO9는 Ground Steering으로 설정했고 1100/1500/1900us 범위를 사용한다.
+
+MDD20A 구동은 전후진 방향과 엔코더 부호를 확정했고, 최소 PWM을 5로
+보정하여 기존 저속 펄스 현상을 제거했다. 바퀴 10회전 측정 결과를 반영해
+COUNTS_PER_REV를 149.8로 수정했다. 바퀴를 띄운 시험에서 전진과 후진 모두
+±0.3 km/h 목표에 대해 약 ±0.27~±0.34 km/h로 안정적으로 수렴했다.
+
+ROS /cmd_vel의 linear.x를 Arduino USB 시리얼로 전달하는 노드가 구현되었고,
+지면에서 +0.06/-0.06 m/s 명령이 각각 +0.216/-0.216 km/h로 전달되어
+전진과 후진하는 것을 확인했다. Pixhawk CH3 구동 출력은 제거되어 현재
+구동은 Arduino만 담당한다. 명령 중단 시 안전정지도 확인했다.
+
+ROS angular.z 조향 통합 경로도 완료했다. 초기에는 MAVROS 송신 system_id가
+1이고 Pixhawk MAV_GCS_SYSID가 255라 RC Override가 거부되었다. MAVROS를
+system_id=255로 실행한 뒤 CH1 1786 명령이 SERVO9 약 1776으로 출력되는 것을
+확인했다. 실제 조향 방향이 ROS 규칙과 반대여서 reverse_steering_output을
+추가했고, 현재 최종 규칙은 +angular.z=우회전, -angular.z=좌회전이다.
+
+지상에서 linear.x=0.10 m/s 상태의 전진+좌회전과 전진+우회전을 모두
+성공했고 명령 종료 시 구동 정지와 조향 중앙 복귀도 확인했다. 따라서
+ROS 기본 구동(전진, 후진, 좌회전, 우회전, 복합 조향)은 정상 완료 상태다.
+
+현재 LiDAR/RRT/추종/원격모드/Pixhawk/Arduino 제어는 실내 통합 launch로
+실행하며, MAVROS는 ABI 충돌 방지를 위해 시스템 MAVROS를 별도 터미널에서
+system_id=255로 실행한다. 남은 핵심 작업은 새 MANUAL E-stop 후진/조향
+탈출 동작과 실제 통신 단절 안전시험을 수행하는 것이다. 현재 중앙 목표
+PWM 1500/POT 485가 실제 직진 바퀴각과 맞는지 확인하는 작업은 충분한
+속도와 직진거리가 필요한 실외 시험이므로 후순위로 미룬다. 실외 시험에서
+좌우 쏠림이 확인되면 기계적 중앙값을 다시 측정해 Arduino 중앙값을
+보정한다. GPS/IST8310 도착 후
+임시 COMPASS_ENABLE=0 설정을 반드시 1로 복원하고 외장 나침반 보정과
+RTK/EKF 확인을 해야 한다. 이후 LiDAR E-stop 및 자율주행 파라미터 튜닝을
+진행한다.
+
+
+
+
+1. 자동수동전환
+2. 라이다 실험 (장애물 rrt로 회피)
+
+
+10. 2026-08-31 실내 LiDAR/RRT/원격제어 실차시험 최신 기록
+------------------------------------------------------------
+
+완료 및 확인:
+
+  [완료] 휴대폰 웹에서 AUTO / STOP / MANUAL 원격 전환 및 수동 전후진/조향
+  [완료] 휴대폰 화면 회전 시 heartbeat 보강
+         heartbeat POST + PIN 인증 상태조회 GET을 이중 operator-presence로 사용
+         실내 operator timeout 5.0초, 실제 연결 단절 시 STOP 유지
+  [완료] LiDAR C1 /scan 약 10Hz 확인
+  [완료] /rrt_path 약 5Hz 발행 확인
+  [완료] RViz2 Jazzy용 /scan 및 /rrt_path 표시 설정
+  [완료] LiDAR가 차량 기준 180도 반대 장착된 현재 시험 방향 반영
+  [완료] 실차 AUTO 전진 및 장애물 근접 E-stop 정지 확인
+  [완료] RRT 경로가 휘는 경우 Pure Pursuit 조향 명령 생성 확인
+         예: target waypoint y=+0.298, /cmd_vel/auto angular.z=-0.25
+  [완료] Pure Pursuit minimum_lookahead를 0.65m로 조정하여
+         첫 0.5m 직진 노드가 아닌 첫 우회 노드를 선택하도록 수정
+  [완료] 고정 2m 목표가 장애물과 겹쳐 경로가 사라지는 문제 보완
+         2.0m 좌우 목표 실패 시 1.5m, 1.0m 목표를 단계적으로 탐색
+  [완료] 경로 탐색 실패 시 RViz에 이전 경로가 잔상으로 남지 않도록
+         빈 Waypoints와 빈 Path를 함께 발행
+  [완료] E-stop 상태에서 MANUAL 복구 기능 구현
+         AUTO: 전진/후진/조향 모두 정지
+         MANUAL + 장애물 E-stop: 전진 차단, 후진 및 조향 허용
+         라이다/명령/모드 데이터 stale: 후진 탈출도 금지하고 완전 정지
+
+현재 실내시험 파라미터:
+
+  AUTO 목표속도                  = 0.15 m/s
+  MANUAL 웹 슬라이더 범위        = -0.90 ~ +0.90 m/s
+  ROS Arduino bridge 제한        = 3.30 km/h
+  Arduino 펌웨어 MAX_SPEED_KMH   = 2.0 km/h
+    주의: 현재 실제 수동 최고속도는 Arduino 펌웨어에서 약 2.0 km/h
+          (약 0.56 m/s)로 최종 제한됨. 고속 PI/제동 검증 전 임의 상향 금지.
+  E-stop 거리                    = 0.50 m
+  E-stop 전방 각도               = 좌우 각각 60도
+  RRT planning distance          = 2.0 m
+  RRT planning rate              = 5.0 Hz
+  RRT obstacle max range         = 2.5 m
+  RRT obstacle inflation radius  = 0.48 m
+  RRT self-filter radius         = 0.50 m
+  Pure Pursuit lookahead         = 0.65 m
+  최대 조향명령                  = 0.25 rad
+
+차체/라이다 임시 치수:
+
+  차량 전체 폭                  = 78 cm
+  라이다 기준 좌측/우측 끝      = 각각 약 38 cm
+  라이다 기준 차량 전방 끝      = 약 5 cm
+  [중요] 라이다 장착 위치는 아직 확정되지 않았으며 위 치수는 임시값이다.
+         최종 장착 후 좌/우/앞/뒤 offset과 yaw를 반드시 다시 측정한다.
+         재측정 후 TF, self-filter, obstacle inflation을 다시 설정한다.
+
+오늘 발견 및 보완한 문제:
+
+  - RRT 2Hz와 tracker timeout 0.6초 조합의 전진 펄스 현상:
+    RRT 5Hz, tracker timeout 1.0초로 수정 후 정상
+  - 고정 목표점이 장애물 내부일 때 E-stop=false인데 정지:
+    좌우/단축 목표 fallback 추가
+  - 차량 시작점이 팽창 장애물 안에 포함되어 waypoints=[] 발생:
+    차폭 기준 self-filter를 0.50m로 조정
+  - RViz에서 마지막 대각선 경로가 현재 경로처럼 남는 문제:
+    경로 실패 시 빈 Path 발행으로 수정
+  - 포텐셔미터 수동 확인:
+    전체 ADC 관측 범위 약 32~972, 기존 코드 중앙 POT_AT_CENTER=485 유지
+    중앙값 코드는 이번 측정에서 변경하지 않음
+  - Arduino 원래 통합 sketch_aug.ino 재업로드 완료
+    Arduino Uno /dev/ttyACM0, 빌드 저장공간 30%, RAM 38%
+
+다음 작업 / 미완료:
+
+  1) 새 MANUAL E-stop 탈출 동작 실차 검증
+     - 장애물 E-stop=true에서 전진 차단 확인
+     - 낮은 후진값(-0.10m/s) 허용 확인
+     - 조향 허용 및 장애물 이탈 후 E-stop=false 복구 확인
+  2) 실제 최종 LiDAR 장착 위치 확정 및 치수/yaw/TF 재측정
+  3) 직사각형 차량 footprint 또는 회전 시 swept footprint 반영
+     현재 0.48m 원형 장애물 팽창은 차폭 기반 근사값임
+  4) 좁은 실내에서 반복되는 no collision-free path 재검증 및 튜닝
+  5) 속도 단계별 PI, 제동거리, E-stop 거리 검증
+     0.15 -> 0.30 -> 0.50m/s 순서 권장, 1m/s 이상은 실외 폐쇄구간에서만
+  6) 실외 angular.z=0 직진 주행으로 PWM1500/POT485 실제 중앙 확인
+  7) GPS/IST8310 장착 후 COMPASS_ENABLE 복원, 나침반/RTK/EKF 보정
+
+
+11. 카메라/비전 구현 계획 (2026-09-01 추가)
+-------------------------------------------
+
+현재 상태:
+
+  [확인] /dev/video0, /dev/video1 장치 존재
+         현재 확인된 장치는 노트북 내장 Sonix 웹캠일 가능성이 높음
+  [설치] ROS2 Jazzy cv_bridge, image_transport, image_transport_plugins
+  [설치] image_tools(cam2image, showimage)
+  [미설치] ROS2 Jazzy usb_cam 또는 v4l2_camera 드라이버
+  [주의] workspace의 src/usb_cam은 구형 ROS1 패키지이며 COLCON_IGNORE 상태
+  [주의] 기존 LaneNet/stop_line_detector는 대부분 rospy 기반 ROS1 코드이고
+         /home/navigator 등 과거 절대경로가 남아 있어 ROS2에서 바로 사용 불가
+  [보유] LaneNet 모델 소스와 학습 가중치 파일은 workspace에 존재
+
+카메라의 예정 역할:
+
+  1) 전방 차선 검출 및 차선 중심 오차 산출
+  2) 정지선 검출
+  3) 필요 시 표지판/신호/객체 인식
+  4) 주행 영상 기록 및 실외시험 사후 분석
+  주의: LiDAR 장애물 E-stop과 RRT 회피는 카메라 없이도 독립 동작하며,
+        초기 비전 시험에서는 카메라가 직접 /cmd_vel을 제어하지 않게 한다.
+
+권장 구현 순서:
+
+  1) 실제 차량용 USB 카메라 선정/연결 및 고정 장착
+     - 해상도/FPS/화각 확인, 진동과 역광을 고려한 위치 선정
+     - 장착 위치가 바뀌지 않게 고정 후 높이/pitch/yaw 측정
+  2) ROS2 Jazzy 카메라 드라이버 설치 및 전용 launch 작성
+     - /camera/image_raw, /camera/camera_info 발행
+     - USB 장치 번호 대신 /dev/v4l/by-id 고정 경로 사용
+  3) 영상 기본 검증
+     - 목표 시작값 640x480 또는 1280x720, 20~30FPS
+     - RViz 또는 image_tools/showimage에서 지연, 끊김, 노출 확인
+  4) 단안 카메라 내부 파라미터 보정
+     - 체커보드로 fx/fy/cx/cy 및 왜곡계수 산출
+     - camera_info YAML 저장 및 launch에 연결
+  5) 차량 기준 외부 파라미터 보정
+     - base_link -> camera_link 위치와 roll/pitch/yaw 측정
+     - 실제 도로 평면 기준 원근변환(BEV) 보정
+  6) 기존 차선/정지선 코드를 ROS2 Jazzy로 이식
+     - rospy -> rclpy, ROS2 sensor_msgs/Image, cv_bridge 사용
+     - 절대경로 제거, 모델 경로/threshold를 ROS 파라미터화
+     - /vision/lane_offset, /vision/lane_heading,
+       /vision/stop_line_detected 및 디버그 영상 발행
+  7) 녹화 데이터로 먼저 오프라인 검증
+     - 직선/곡선/그림자/역광/흐린 차선/야간 데이터 수집
+     - 실제 차량을 움직이기 전에 검출률과 오검출 확인
+  8) LiDAR/RRT와 제어 결합
+     - 기본 진행방향은 차선 중심으로 정하고 근거리 장애물은 RRT가 회피
+     - 회피 완료 후 차선 중심으로 복귀
+     - 카메라 stale/검출 신뢰도 저하 시 속도 제한 또는 안전정지
+     - LiDAR E-stop은 카메라 판단보다 항상 우선
+  9) 실외 폐쇄구간 단계시험
+     - 처음에는 영상 표시만 하고 제어하지 않음
+     - 다음은 저속 차선 조향만 적용
+     - 마지막으로 차선 추종 + RRT 회피 + 차선 복귀 통합 검증
+
+카메라 관련 다음 첫 작업:
+
+  [미완료] 차량에 사용할 실제 외장 USB 카메라 모델과 장치 경로 확인
+  [미완료] ROS2 카메라 드라이버 설치
+  [미완료] /camera/image_raw 및 /camera/camera_info 발행 확인
+  [미완료] 카메라 내부/외부 보정
+  [미완료] 기존 LaneNet 및 정지선 노드 ROS2 이식
+
+C920e 적용 결정 (2026-09-01):
+
+  [선정 완료] Logitech C920e USB 카메라
+  [설정 완료] t870_control/config/c920e.yaml
+  [실행파일 완료] t870_control/launch/t870_c920e.launch.py
+  실측 기본 설정: 640x480, 30FPS, mmap, yuyv2rgb, 자동노출/자동화이트밸런스/자동초점
+  발행 예정: /camera/image_raw, /camera/camera_info
+  [미완료] ros-jazzy-usb-cam 설치(sudo 비밀번호가 필요하여 사용자 직접 설치)
+  [미완료] C920e 연결 후 /dev/v4l/by-id 고정 장치 경로 확인
+  [미완료] 실제 지원 pixel format과 720p 30FPS 확인
+  [미완료] 최종 장착 후 내부 보정 YAML 및 base_link->camera TF 적용
+  [검증 완료] C920e /dev/video2에서 V4L2 MJPG 640x480 약 29.94FPS
+  [검증] ROS raw 토픽의 Python hz 측정은 약 10Hz였으나,
+         compressed 전송은 중복 발행 합산 약 55Hz로 각각 약 30Hz 수준 확인
+
+C920e 작업 종료 시점 현황 (2026-09-01):
+
+  [완료] ros-jazzy-usb-cam 및 v4l-utils 설치
+  [완료] Logitech C920e 장치 인식
+         현재 C920e 영상 장치 /dev/video2, 보조 인터페이스 /dev/video3
+         노트북 내장 카메라는 /dev/video0, /dev/video1
+  [완료] V4L2 단독 스트리밍 640x480 MJPG 30FPS 시험
+         실측 약 29.93~29.95FPS로 카메라와 USB 연결 정상 확인
+  [완료] ROS2 usb_cam 실행 및 /camera/image_raw 발행 확인
+  [완료] image_tools showimage에서 실제 C920e 영상 표시 확인
+  [완료] C920e 전용 config/launch 추가 및 t870_control 재빌드
+  [적용 기본값] 640x480, 30FPS, mmap, yuyv2rgb
+  [참고] ros2 topic hz로 큰 raw RGB 영상을 측정하면 약 10Hz로 낮게 측정됨
+         카메라 자체는 약 30FPS이며 compressed 경로에서도 약 30FPS 수준 확인
+  [참고] camera_info 보정 파일이 없다는 경고는 현재 정상이며 보정 후 해소 예정
+
+카메라 다음 작업:
+
+  1) 차량에 C920e 임시 장착
+  2) 영상 중앙과 차량 정면 일치, 좌우 화각, 차체 노출 범위 확인
+  3) 카메라 높이와 roll/pitch/yaw 측정 및 진동 확인
+  4) 최종 장착 위치 확정 후 체커보드 내부 보정(camera_info YAML 생성)
+  5) base_link -> camera_link/optical_frame 외부 TF 적용
+  6) 기존 LaneNet 및 정지선 검출 코드를 ROS2 Jazzy로 이식
+  7) 초기에는 검출 결과만 표시하고 주행 제어에는 연결하지 않은 상태로 검증
+
+
+12. 2026-09-02 재배선 후 시험구동 기록
+----------------------------------------
+
+연결 확인:
+
+  [완료] 재배선 후 Arduino serial 재연결 확인
+  [완료] RPLIDAR C1 health OK 및 /scan 10Hz 확인
+  [완료] Pixhawk /dev/ttyACM1 인식 및 MAVROS 연결 확인
+  [주의] MAVROS 실행 명령에서 '-p'와 'component_id:=191' 사이가 줄바꿈되면
+         trailing -p 파싱 오류가 발생함. 각 '-p 파라미터:=값'은 같은 줄에 둔다.
+
+MANUAL E-stop 탈출 기능 실차 검증:
+
+  [완료] 장애물 E-stop ACTIVE 상태에서 MANUAL 전진 차단 확인
+  [완료] 동일 E-stop 상태에서 MANUAL 후진 허용 확인
+  [완료] 동일 E-stop 상태에서 MANUAL 좌/우 조향 허용 확인
+  [확인] 처음에는 후진과 조향만 되고 전진이 되지 않아 고장으로 의심했으나,
+         의도된 E-stop 탈출 안전 로직이 정상 작동한 것이었음
+  [결론] 기존 미완료 항목이었던 'MANUAL + 장애물 E-stop 후진/조향 탈출'의
+         핵심 실차 동작 검증 완료
+
+남은 관련 안전시험:
+
+  - 장애물을 후진으로 벗어난 뒤 E-stop=false 자동 복구 최종 확인
+  - /cmd_vel 중단, LiDAR 중단, Arduino USB 분리, MAVROS 종료 시 안전정지 확인
+
+
+13. 2026-09-02~03 C920e 차선 인식/AUTO 제어 작업 기록
+---------------------------------------------------------
+
+구현 및 연결 완료:
+
+  [구현] ROS2 차선 인식/미리보기 노드
+         src/t870_control/t870_control/lane_camera_preview.py
+  [구현] 실행 launch
+         src/t870_control/launch/t870_lane_preview.launch.py
+  [구현] 기존 ENet LaneNet 가중치를 ROS2 노드에서 로드
+  [구현] C920e 직접 V4L2/MJPG 입력, 최신 프레임만 처리
+  [구현] 화면에 차선 마스크, 빨간 목표 경로, offset, steer, 검출 상태 표시
+  [구현] 진단/제어 토픽
+         /vision/lane_detected
+         /vision/lane_offset
+         /vision/lane_confidence
+         /vision/lane_steering
+         /cmd_vel/lane
+  [구현] remote_mode_control_node의 AUTO 입력 토픽 선택 파라미터
+         auto_command_topic 기본값 /cmd_vel/auto
+         차선 시험 시 /cmd_vel/lane으로 지정
+  [구현] t870_indoor_lidar.launch.py에 auto_command_topic 인자 전달
+  [확인] 최종 ROS 조향 부호는 기존 규칙 유지
+         +angular.z=우회전, -angular.z=좌회전
+
+현재 차선 제어 안전 설정:
+
+  - 차선 제어가 활성화돼도 원격 노드는 항상 STOP 모드로 시작
+  - 휴대폰에서 AUTO를 선택해야 /cmd_vel/lane이 최종 /cmd_vel로 전달됨
+  - 차선 검출 실패 시 0 명령 출력
+  - 순간 검출 누락은 마지막 정상 경로를 최대 0.8초 유지한 뒤 정지
+  - 현재 소스/마지막 빌드 기준 AUTO 목표속도 0.30m/s
+  - 최대 차선 조향명령 0.18rad/s
+  - LiDAR E-stop, STOP, 기존 Arduino/Pixhawk watchdog은 계속 최종 우선
+
+카메라 안정성 보완:
+
+  [발견] C920e가 시험 중 간헐적으로 /dev/video2에서 사라져 기존 차선 노드가
+         종료되고 AUTO 명령이 끊기는 현상 발생
+  [구현] C920 USB가 사라져도 노드를 종료하지 않고 0 명령을 계속 발행
+  [구현] /dev/video2가 돌아오면 캡처 스레드가 자동 재연결
+  [주의] 물리 USB 접촉/허브/전원 문제 자체는 아직 해결되지 않음
+         최종 장착 시 USB 직결, 케이블 고정 및 재연결 시험 필요
+
+그림자 및 오검출 보완 작업:
+
+  [구현] LAB 밝기 채널 CLAHE 국소 대비 보정 후 LaneNet 추론
+  [구현] 그림자에서 노란선이 끊기는 경우를 위한 HSV 노란색 보조 마스크
+  [구현] 흰옷/차량/반사를 막기 위해 일반 흰색 색상 마스크는 사용하지 않음
+  [구현] connected component 면적/길이/하단 도달/원근/기울기 검사
+  [구현] 검출 중심선 평활화(lane_smoothing=0.35)
+  [구현] 보도블록 진입부 같은 가로 경계를 거르기 위한 좌우 소실점 방향 검사
+  [수정] 단일 노란 경계선 신뢰도가 선택된 선이 아닌 마지막 잡음 면적을
+         사용하던 버그 수정. 야외 저장 프레임에서 신뢰도 약 0.45 -> 0.80
+
+2026-09-03 야외 현장 분석 결과:
+
+  [확인] 첫 야외 캡처에서는 오른쪽 노란 도로 경계선 한 줄만 보이고
+         회색 연석/보도블록이 함께 보여 기존 양쪽 선 방식이 연석을 오인함
+  [확인] 이후 최신 캡처에서는 좌우 노란선이 모두 보였으나 오른쪽 차선의
+         아래쪽이 사람 팔/손가락에 가려짐
+  [확인] 오른쪽 실제 노란선은 작은 여러 조각으로 검출됨
+         대략 (238,80), (257,94), (280,102), (297,110), (317,121)
+         방향으로 정렬되지만 하나의 연결요소가 아니어서 기존 검출이 자주 실패
+  [확인] 왼쪽 노란선은 큰 연결요소로 비교적 안정적으로 검출됨
+  [문제] 단일 오른쪽 선의 고정 오프셋으로 중앙을 추정하면 빨간 목표 경로가
+         왼쪽 차선 쪽에 붙어 실제 차로 중앙과 맞지 않음
+  [문제] 화면 우측의 팔/손가락 또는 보도블록이 큰 노란 영역으로 잡힐 수 있음
+
+현재 소스의 마지막 변경 상태(2026-09-03 구현 완료):
+
+  [구현/빌드 완료] 왼쪽의 큰 실제 노란선은 색상 마스크에서 선택하고,
+  오른쪽의 작은 조각들은 LaneNet 마스크에서 RANSAC 유사 정렬 방식으로 묶어
+  두 선의 실제 중간을 계산하는 estimate_hybrid_yellow_lane() 적용.
+  [오프라인 확인] /tmp/t870_outdoor_latest.jpg에서 hybrid_pair 검출 성공,
+  confidence=0.76, 기존 왼쪽 차선 부착 경로가 좌우 추정 경계 중앙으로 이동.
+  [테스트 완료] 차선 단위 테스트 2개 및 t870_control 전체 테스트 5개 통과.
+  [빌드 완료] build_t870/install_t870 symlink-install 재빌드 성공.
+  [미검증] 모터 OFF 실시간 화면 및 실차 주행 검증은 사용자 요청대로 보류.
+
+추가 구현:
+
+  - C920 장치 번호 변경 대응 자동 탐색
+    /dev/v4l/by-id의 C920/Logitech index0 우선, 없으면 sysfs 장치명 검색
+  - 선택적 진단 저장(save_diagnostics:=true)
+    /tmp/t870_lane_diagnostics에 최신 원본/신경망/노란색/overlay 저장
+  - /vision/lane_source 토픽 및 화면에 neural_pair/single_yellow/hybrid_pair 표시
+  - 주요 신뢰도/평활화/유지/제어 gain을 launch 인자로 노출
+  - LiDAR 안전 stack + 휴대폰 모드 + Pixhawk/Arduino + 차선 AUTO 통합 launch
+    src/t870_control/launch/t870_lane_autonomy.launch.py
+
+다음 차선 작업 우선순위:
+
+  1) 모터 전원 OFF/휴대폰 STOP 상태로 빨간 경로가 차로 중앙인지 화면 검증
+  2) 카메라 앞의 사람/손가락을 완전히 제거하고 동일 구간 재검증
+  3) 직선/그림자/보도블록 진입부를 각각 ROS bag 또는 영상으로 녹화하여
+     프레임별 검출률과 오검출률을 오프라인 검증
+  4) 중앙 경로가 안정된 뒤에만 0.30m/s AUTO 실차시험
+
+현재 결론:
+
+  C920e 영상 표시, LaneNet 실행, 차선 진단 토픽, 휴대폰 AUTO 입력 연결 및
+  안전정지 경로는 구현되었다. 그러나 차선 인식 품질과 실제 차로 중앙 산출은
+  아직 완료 상태가 아니다. 특히 오른쪽 차선 단편 연결과 보도블록/사람 오인,
+  카메라 가림에 대한 검증이 남아 있다. 현재 차선 AUTO는 개발/시험 단계이며
+  정상 자율주행 완료로 간주하지 않는다.
+
+===============================================================================
+[2026-09-03 SMC-2000 USB GPS ROS2 연결 완료]
+===============================================================================
+- SMC-2000의 GPS USB를 노트북에 직접 연결하여 u-blox F9P 수신 확인.
+- 고정 장치 경로:
+  /dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00
+- 수신기 원시 NMEA 확인 결과: GGA fix quality 1, 위성 12개, HDOP 약 1.07.
+- ROS2 전용 노드 `smc2000_gps_node` 및 launch 파일 구현/빌드 완료.
+- ROS 토픽:
+  - /gps/fix (sensor_msgs/msg/NavSatFix)
+  - /gps/velocity (geometry_msgs/msg/TwistStamped, ENU 수평속도)
+- 실측 검증 완료: /gps/fix 약 4.0 Hz, status=0(FIX), 실제 위도/경도/고도 출력 정상.
+- 실행:
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  ros2 launch t870_control t870_smc2000_gps.launch.py
+- 현재 FIX는 단독 측위(quality 1)이며 RTK FIX는 아님. RTK 보정 입력과 실외 검증은 남은 작업.
+
+===============================================================================
+[2026-09-03 GPS 경로 선택 계획 변경]
+===============================================================================
+- [계획에서 제거] 휴대폰 웹에서 GPS 경로 파일을 찾아 선택하는 기능.
+- GPS 경로 추종 기능과 휴대폰의 GPS PATH 운전 모드는 유지한다.
+- 사용할 경로 파일은 필요할 때 전체 구동 launch의 아래 인수로 지정한다.
+  gps_follow_path_file:=/절대경로/경로파일.csv
+- 따라서 웹 인터페이스에는 경로 파일 목록/선택 UI를 추가하지 않는다.
+
+===============================================================================
+[2026-09-03 현재 전체 진행 현황 최신 정리]
+===============================================================================
+
+상태 표기:
+  [완료/검증] 코드 구현과 실제 장치 또는 실차 동작 확인까지 완료
+  [구현/미검증] 코드는 구현·빌드했으나 실제 환경 검증 또는 튜닝이 남음
+  [미완료] 아직 구현되지 않았거나 필수 측정/검증이 남음
+
+1. 차량 전원·배선·Arduino 구동
+--------------------------------
+  [완료/검증] 전후진 MDD20A 배선 및 구동 방향 수정
+  [완료/검증] 전진 명령은 전진, 후진 명령은 후진으로 동작
+  [완료/검증] 엔코더 전진 부호가 +값이 되도록 설정
+  [완료/검증] 저속 PI 구동의 펄스성 웅/멈춤 현상 해소
+  [완료/검증] Arduino 명령 watchdog 및 정지 동작
+  [완료/검증] 조향 포텐셔미터 A0, 중앙값 POT 485 사용
+  [완료/검증] 조향 방향: +angular.z=우회전, -angular.z=좌회전
+  [완료/검증] Pixhawk PWM CH1을 이용한 조향 제어
+  [완료/검증] 모터드라이버 MA/MB 버튼을 이용한 직접 구동
+  [구현/미검증] Arduino 상태 문자열의 Act 엔코더 속도를 ROS2에서 파싱
+  [구현/미검증] /wheel/speed_mps 및 /wheel/odometry 발행
+  [미완료] 실제 직진 주행 기준 POT 485 중앙 정밀 재확인
+  [미완료] 최종 납땜·케이블 고정 후 진동/단선/재부팅 시험
+  [미완료] 최종 퓨즈 용량은 실측 정상전류·기동전류 기준으로 확정
+
+확정 배선 색상:
+  - 전후진 MDD20A M1A: 노란색
+  - 전후진 MDD20A M1B: 파란색
+  - 조향 MD20A MA: 초록색
+  - 조향 MD20A MB: 흰색
+  - Arduino D2: 초록색 엔코더선
+  - Arduino D3: 파란색 엔코더선
+
+2. Pixhawk·MAVROS·조향 인터페이스
+----------------------------------
+  [완료/검증] Holybro Pixhawk 6C USB 인식 및 MAVROS connected=true 확인
+  [완료/검증] 가속도/IMU 데이터 /mavros/imu/data 수신
+  [완료/검증] Pixhawk arming 및 가속도계 보정
+  [완료/검증] ROS /cmd_vel 조향 명령을 PWM CH1로 출력
+  [완료/검증] ROS 전진·후진·좌회전·우회전 실차 동작
+  [완료/검증] E-stop 상태에서 MANUAL 전진 차단
+  [완료/검증] E-stop 상태에서 MANUAL 후진과 조향을 이용한 탈출 허용
+  [주의] MAVROS 명령의 각 '-p 파라미터:=값'을 줄바꿈으로 분리하면 안 됨
+  [미완료] MAVROS/Arduino/LiDAR/카메라 USB 재연결 반복 안정성 시험
+
+3. 휴대폰 원격제어
+------------------
+  [완료/검증] 휴대폰 핫스팟을 통한 웹 제어 접속
+  [완료/검증] STOP/AUTO/MANUAL/GPS PATH 모드 전환
+  [완료/검증] 세로 전후진 슬라이더와 좌우 조향 슬라이더
+  [완료/검증] 화면 회전·Safari 상태 변화 시 heartbeat 보강
+  [완료/검증] 연결 상실 및 명령 timeout 시 안전정지
+  [완료/검증] 휴대폰에서 GPS 기록 시작/중지 및 기록 점 개수 표시
+  [계획 제거] 휴대폰 화면에서 GPS 경로 파일을 선택하는 기능은 만들지 않음
+  [유지] GPS 경로 파일은 launch의 gps_follow_path_file 인수로 직접 지정
+
+4. RPLIDAR C1·RRT 장애물 회피
+-------------------------------
+  [완료/검증] RPLIDAR C1 USB 연결, health OK, /scan 약 10Hz
+  [완료/검증] 실내 저속 RRT 경로 /rrt_path 약 2Hz 생성
+  [완료/검증] RViz에서 장애물에 따라 경로가 휘어지는 것 확인
+  [완료/검증] 저속 실차에서 장애물 우회 동작 확인
+  [완료/검증] 근거리 장애물 E-stop 정지
+  [완료/검증] 빠르게 진입하는 물체/사람 감지 시 3초 정지 로직 구현
+  [완료/검증] 차량 폭 0.78m 기반 obstacle radius/self-filter 반영
+  [구현/미검증] 차선/GPS 공통 RRT 명령 결합 노드 rrt_avoidance_mux 구현
+  [구현/미검증] RRT 횡편차 0.20m 이상이면 우회 명령으로 점진 전환
+  [구현/미검증] 횡편차 0.10m 이하가 유지되면 원래 차선/GPS 경로로 복귀
+  [구현/미검증] 우회 중 RRT 입력이 끊기면 명령을 0으로 만드는 fail-safe
+  [구현/미검증] 출력 토픽 /cmd_vel/lane_safe, /cmd_vel/gps_safe
+  [구현/미검증] 상태 토픽 /rrt/avoidance_active,
+                 /rrt/maximum_lateral_offset
+  [미완료] 새 차선+RRT 결합 로직의 모터 OFF 토픽 검증
+  [미완료] 새 차선+RRT 결합 로직의 실차 우회 및 차선 복귀 검증
+  [미완료] 새 GPS+RRT 결합 로직의 실외 우회 및 GPS 경로 복귀 검증
+  [완료/측정] 최종 LiDAR 장착 위치 측정 완료
+               기준점=뒷바퀴 축 중앙, 회전축 기준
+               lidar_x=+0.83m, lidar_y=+0.0075m(차량 중심보다 왼쪽),
+               lidar_z=+0.49m, 물리 장착 yaw=0도
+  [적용] 실외 t870_autonomy.launch.py 기본 장착 위치에 반영
+  [주의] C1 ROS 스캔 좌표의 +X가 차량 뒤쪽을 향하는 것으로 기존 검증되어
+         TF/플래너의 좌표축 보정 lidar_yaw=pi(3.14159)는 유지
+
+5. C920e 카메라·차선 추종
+--------------------------
+  [완료/검증] Logitech C920e 장치 인식 및 MJPG 640x480 30FPS 단독 시험
+  [완료/검증] ROS2 카메라 영상 및 압축 영상 표시
+  [완료/검증] 카메라 장치 번호 변경 시 C920e 자동 탐색/재연결
+  [완료/검증] LaneNet 기반 차선 표시 및 /cmd_vel/lane 생성
+  [완료/검증] 버드아이뷰 변환 후 차선 검출/중앙 경로 산출
+  [완료/검증] 그림자 CLAHE 보정, 노란선 보조 마스크, 가로 구조물 제거
+  [완료/검증] 단편화된 오른쪽 노란선 결합 및 좌우 중앙 경로 계산 코드
+  [구현/미검증] 차선 인식 실패 시 0.8초 이전 명령 유지 후 정지
+  [구현/미검증] 차선 AUTO 출력이 RRT 결합을 거쳐 /cmd_vel/lane_safe로 전달
+  [미완료] 실제 카메라 고정 위치·roll/pitch/yaw 최종 확정
+  [미완료] 카메라 내부 체커보드 보정 및 camera_info YAML 생성
+  [미완료] base_link→camera_link→camera_optical_frame 실제 외부 TF 보정
+  [미완료] 오른쪽 차선/보도블록/사람/그림자 환경의 장시간 인식률 검증
+  [미완료] 실외 정상속도 차선 유지 및 차선 중앙 복귀 튜닝
+
+현재 카메라 임시 측정값:
+  - 지면에서 카메라 약 0.97m
+  - 앞 범퍼에서 렌즈까지 약 1.11m
+  - 뒤쪽 장착으로 차량 전방 약 0.5m가 차체에 가림
+
+6. 신호등·정지선
+----------------
+  [구현/미검증] 원본 카메라 상단 ROI에서 RED/YELLOW/GREEN HSV 검출
+  [구현/미검증] 버드아이뷰 도로 영역에서 가로 흰색 정지선 검출
+  [구현/미검증] 빨강/노랑 신호와 정지선이 안정 검출되면 정지 latch
+  [구현/미검증] 안정된 초록 신호가 검출되면 정지 latch 해제
+  [구현/미검증] 차선 AUTO와 GPS PATH 모두 신호 정지 적용
+  [구현/미검증] MANUAL은 운전자 복구를 위해 사용 가능
+  [구현/미검증] /vision/traffic_light_state,
+                 /vision/stop_line_detected, /vision/traffic_stop 발행
+  [완료/코드시험] 합성 영상 검출 단위시험 5개 통과 및 빌드 완료
+  [미완료] 실제 신호등 크기·거리·역광·야간 오검출/미검출 시험
+  [미완료] 실차 정지선 정지 거리와 제동거리 보정
+  [미완료] HSV 검출 한계가 크면 학습형 신호등 검출기로 교체
+
+7. SMC-2000 GPS 기록·경로 추종
+--------------------------------
+  [완료/검증] SMC-2000을 GPS USB로 노트북에 연결
+  [완료/검증] /gps/fix 약 4Hz와 /gps/velocity 출력
+  [완료/검증] 단독 GPS FIX, 위성 및 NMEA 수신
+  [완료/검증] 휴대폰 버튼으로 GPS 기록 시작/중지
+  [완료/검증] 이동거리 1m 간격 CSV/TXT 경로 기록
+  [구현/미검증] 저장된 CSV/TXT GPS 경로 Pure Pursuit 추종
+  [구현/미검증] 휴대폰 GPS PATH 모드에서 /cmd_vel/gps_safe 선택
+  [구현/미검증] 장애물 우회 후 원래 GPS 경로로 재진입
+  [미완료] 실제 기록 경로를 이용한 실외 왕복 추종 시험
+  [미완료] GPS 경로 종료점 정지 및 큰 경로 이탈 안전정지 실차 확인
+  [미완료] 현재 단독 GPS FIX이며 RTK 보정 입력/RTK FIX 검증 안 됨
+
+8. GPS+Pixhawk IMU+Arduino 엔코더 위치 융합
+--------------------------------------------
+  [구현/미검증] ros-jazzy-robot-localization 설치 상태 확인
+  [구현/미검증] 로컬 EKF: 엔코더 선속도 + Pixhawk IMU 융합
+  [구현/미검증] navsat_transform: SMC-2000 /gps/fix 변환
+  [구현/미검증] 글로벌 EKF: GPS 위치 + IMU 방향 + 엔코더 속도 융합
+  [구현/미검증] /odometry/local 및 /odometry/global 출력 구성
+  [구현/미검증] map→odom→base_link TF 구성
+  [구현/미검증] t870_localization.launch.py 및 EKF YAML 3개 추가
+  [완료/코드시험] YAML 구문, Python 구문, 패키지 빌드 및 launch 인수 확인
+  [미완료] GPS/IMU의 base_link 기준 X/Y/Z 실제 장착 위치 측정 및 반영
+  [미완료] Pixhawk IMU yaw 방향, yaw_offset, magnetic declination 보정
+  [미완료] 엔코더 속도 covariance 및 GPS covariance 실측 튜닝
+  [미완료] 정지·직진·회전·폐곡선 주행에서 EKF 드리프트 검증
+  [미완료] /odometry/global을 실외 RRT/GPS 제어의 기준 위치로 전환 후 검증
+
+9. 통합 안전 및 최종 실차 검증
+-------------------------------
+  [완료/검증] 시작 모드는 항상 STOP
+  [완료/검증] 명령 timeout, heartbeat, LiDAR E-stop, Arduino watchdog 존재
+  [완료/검증] E-stop 중 MANUAL 후진/조향 복구 경로
+  [미완료] /cmd_vel 발행 중단 시험
+  [미완료] LiDAR 회전/scan 중단 시험
+  [미완료] 카메라 USB 제거 및 자동복귀 시험
+  [미완료] Arduino USB 제거 시험
+  [미완료] Pixhawk/MAVROS 연결 중단 시험
+  [미완료] 노트북 절전·프로세스 강제종료·휴대폰 연결 상실 시험
+  [미완료] 저속부터 단계적으로 속도를 올리는 실외 종합시험
+  [미완료] 실제 사람과 차량이 없는 통제구역에서 RRT/차선/GPS/EKF 종합검증
+
+10. 현재 통합 실행 방식
+----------------------
+  기본 작업 경로:
+    cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+    source /opt/ros/jazzy/setup.bash
+    source install_t870/setup.bash
+    export ROS_DOMAIN_ID=0
+    export ROS_LOCALHOST_ONLY=1
+    export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+  차선+LiDAR/RRT+휴대폰+Pixhawk/Arduino 통합:
+    ros2 launch t870_control t870_lane_autonomy.launch.py \
+      lidar_serial_port:=/dev/ttyUSB0
+
+  EKF 위치 융합까지 활성화:
+    ros2 launch t870_control t870_lane_autonomy.launch.py \
+      lidar_serial_port:=/dev/ttyUSB0 \
+      enable_localization:=true
+
+  저장 GPS 경로 추종까지 활성화:
+    ros2 launch t870_control t870_lane_autonomy.launch.py \
+      lidar_serial_port:=/dev/ttyUSB0 \
+      enable_localization:=true \
+      enable_gps_follower:=true \
+      gps_follow_path_file:=/절대경로/저장경로.csv
+
+11. 다음 작업 권장 순서
+----------------------
+  1) 모터 전원 OFF 상태에서 새 토픽과 TF 확인
+     /wheel/odometry, /odometry/local, /odometry/global,
+     /rrt/avoidance_active, /cmd_vel/lane_safe, /cmd_vel/gps_safe
+  2) GPS/IMU/LiDAR/카메라 실제 장착 위치와 방향 측정
+  3) 정지 상태 및 손으로 이동시키는 상태에서 EKF 좌표/방향 검증
+  4) 0.15~0.25m/s로 차선+RRT 우회 및 차선 복귀 시험
+  5) 기록한 짧은 GPS 경로에서 GPS+RRT 우회 및 경로 복귀 시험
+  6) 신호등/정지선은 모터 OFF 영상 시험 후 저속 정지 시험
+  7) 모든 센서/명령 단절 fail-safe 시험
+  8) 통제된 실외 공간에서만 속도와 거리 파라미터를 단계적으로 튜닝
+
+현재 최종 판단:
+  기본 수동 구동, ROS 전후진/조향, 휴대폰 제어, LiDAR/RRT 단독 우회,
+  GPS 수신·기록, 카메라 영상/차선 코드까지는 동작 확인이 되어 있다.
+  차선/GPS와 RRT를 결합하는 명령 계층, 신호등+정지선 정지, 엔코더 기반
+  GPS+IMU EKF는 코드 구현과 빌드까지 완료했지만 아직 새 구현을 실제 차량에서
+  검증하지 않았다. 따라서 이 세 항목은 정상 자율주행 완료로 간주하지 않으며,
+  반드시 모터 OFF 검증과 저속 통제구역 시험을 거친 뒤 사용한다.
+
+===============================================================================
+[2026-09-03 MANUAL 모드 E-stop 정책 변경]
+===============================================================================
+- 사용자 요청으로 MANUAL 모드에서는 LiDAR 장애물 및 동적 E-stop을 우회함.
+- MANUAL 전진/후진/좌우 조향을 모두 운전자가 직접 제어할 수 있음.
+- AUTO 및 GPS PATH 모드에서는 기존 LiDAR E-stop을 그대로 유지함.
+- MANUAL에서도 명령 timeout, 모드 timeout, 휴대폰 heartbeat 및 Arduino
+  watchdog은 유지되며 명령/연결이 끊기면 정지함.
+- 기존의 'E-stop에서 후진만 허용' 정책은 이 변경으로 폐기됨.
+- [구현/미검증] 코드 수정 및 빌드 완료, 변경 후 실차 동작 재검증 필요.
+
+===============================================================================
+[2026-09-03 GPS 안테나 장착 위치 확정]
+===============================================================================
+- 기준점: 뒷바퀴 축 중앙(base_link)
+- 측정 기준: GPS 안테나 중심
+- gps_x=+0.693m (앞쪽 69.3cm)
+- gps_y=0.000m (차량 좌우 중심선)
+- gps_z=+0.412m (지면에서 41.2cm)
+- t870_localization.launch.py의 base_link→gps_link 기본 TF에 반영 완료
+- 남은 장착 측정: Pixhawk IMU x/y/z, 정확한 앞뒤 차축간 휠베이스
+- 카메라 위치와 각도는 장착 위치 확정 후 측정 예정
+
+===============================================================================
+[2026-09-03 야간 최종 변경 사항: 수동속도·카메라 ROI·중앙패스]
+===============================================================================
+
+1. MANUAL 주행 범위
+-------------------
+- 휴대폰 MANUAL 전진/후진 슬라이더 범위를 ±0.90m/s에서 ±1.20m/s로 확대함.
+- Arduino 구동 브리지의 속도 제한을 ±4.40km/h로 함께 확대함
+  (1.20m/s = 4.32km/h이므로 명령이 출력 제한에 잘리지 않음).
+- 웹 화면은 브라우저를 새로고침해야 ±1.20m/s 범위가 표시됨.
+- [구현/미검증] 코드 수정과 빌드 및 통합 노드 재실행 완료.
+- MANUAL의 LiDAR E-stop 우회 정책은 유지됨. 단, 명령 timeout, 모드 timeout,
+  휴대폰 heartbeat, Arduino watchdog 안전정지는 계속 작동함.
+- AUTO/GPS PATH는 LiDAR 및 동적 E-stop을 계속 적용함.
+
+2. 카메라 설치 및 도로 기준
+---------------------------
+- 사용자가 알려준 현 시험 도로 폭: 331.5cm.
+- 2026-09-03 23:05:59 스크린샷 기준으로 카메라 높이/피치는 차선 추종에
+  사용할 수 있는 구도이나, 최종 고정 후 2m/4m/5m 기준 테이프로 재보정 필요.
+- 카메라 최종 장착 위치는 아직 확정되지 않았으므로 실외 최종 캘리브레이션은
+  미완료 상태임.
+
+3. 현재 ROI / 버드아이 변환 입력 영역
+---------------------------------------
+- ROI 아래쪽: 영상 폭의 5%~95%, 영상 높이의 78%.
+- ROI 윗변: 영상 폭의 20%~80%, 영상 높이의 24%.
+- 아래쪽 폭은 넓게 유지하고 윗변만 줄인 사다리꼴임.
+- 기존 윗변 28%~72% 설정은 지나치게 좁아 폐기함.
+- 5m 테이프가 들어오도록 ROI 상단을 기존 높이 32%에서 24%로 올림.
+- 버드아이 변환은 위 ROI 사다리꼴을 기준으로 계산됨.
+- [구현/화면확인 중] 실제 5m 테이프 포함 여부와 화단/수풀 오검출은 새 화면에서
+  추가 확인해야 함.
+
+4. 현재 중앙패스 선택 알고리즘
+--------------------------------
+- 버드아이 공간의 인식 마스크에서 영상 중앙을 기준으로 후보를 좌/우로 나눔.
+- 왼쪽 후보 중 가장 오른쪽(중앙에 가장 가까운) 선을 왼쪽 경계로 선택함.
+- 오른쪽 후보 중 가장 왼쪽(중앙에 가장 가까운) 선을 오른쪽 경계로 선택함.
+- 선택한 두 안쪽 선의 정확한 중간을 주행 패스로 계산함.
+- 과거 오른쪽 치우침 보정 lane_center_bias_ratio=0.08은 0.0으로 제거함.
+- 안쪽 두 선 검출이 실패할 경우에는 기존 hybrid yellow+neural 추정을 사용하고,
+  그것도 실패할 경우 한쪽 노란 차선 추정을 보조 수단으로 사용함.
+- 잠시 두 보조 추정을 제거하는 변경을 시도했으나 사용자 요청으로 즉시 취소했음.
+  따라서 현재 최종 코드는 '안쪽 두 선 우선, 실패 시 보조 추정' 상태임.
+- 중앙패스 선택 관련 단위시험 포함 총 7개 테스트 통과 및 빌드 완료.
+
+5. 현재 실행 상태와 남은 검증
+-----------------------------
+- 카메라/버드아이 차선 화면 노드를 변경 코드로 재실행함.
+- 통합 구동은 항상 STOP에서 시작하고, 실제 주행 전 휴대폰 상태를 확인해야 함.
+- [미검증] ±1.20m/s MANUAL 실차 속도 응답.
+- [미검증] 실제 도로에서 안쪽 두 차선이 선택되고 중앙 빨간 패스가 형성되는지.
+- [미검증] 곡선/한쪽 차선 유실 시 hybrid 및 단일 차선 보조 추정의 안전성.
+- [미검증] 5m 테이프가 버드아이 화면에 끝까지 표시되는지.
+- [미검증] 오른쪽 화단·수풀 오검출 감소 여부. ROI만으로 부족하면 차선 형상 및
+  시간 연속성 필터를 추가해야 함.
+
+===============================================================================
+[현장에 가서 진행할 작업 체크리스트 - 사용자 요청]
+===============================================================================
+
+사용자가 나중에 "현장 가서 할 것 알려줘"라고 요청하면 아래 항목을 안내한다.
+
+1. 카메라 실제 장착 각도 정하기
+2. 현장 영상 기준 ROI 값 조정하기
+3. 현장 영상 기준 Canny 임계값 조정하기
+4. GPS 경로값 기록하기
+5. MANUAL 모드의 적절한 주행 속도 조절하기
+6. AUTO 모드의 적절한 주행 속도 조절하기
+7. 평행주차 알고리즘에 필요한 차량·주차공간 값을 측정하고 계산하기
+8. 현장에서 실제 신호등이 정상적으로 인식되는지 확인하기
+9. 현장에서 정지선이 정상적으로 인식되고 차량이 적절히 정지하는지 확인하기
+10. 현장 속도시험 결과로 주행 PI/PID와 피드포워드 값을 계산·조정하기
+11. 속도 조정 시 E-stop 급정지 동작과 정지거리도 측정하여 관련 제어값을 함께
+    조정하고, 변경된 스케치를 Arduino에 다시 업로드하기
+12. xo 사진찍기
+
+주의:
+- 카메라 관련 최종 보정과 검증은 현장에서 진행한다.
+- 위 항목은 현장 작업 전까지 완료 항목으로 처리하지 않는다.
+
+===============================================================================
+[2026-09-03 E-stop 급정지 명령 구현]
+===============================================================================
+- 기존에는 E-stop도 Arduino에 일반 0 km/h 명령으로 전달되어 0.7km/h/s 감속
+  램프를 거쳤음.
+- Arduino에 E-stop 전용 `E` 시리얼 명령을 추가함.
+- `E` 수신 즉시 속도 목표, 램프 목표, PI 적분값과 구동 PWM을 0으로 만듦.
+- AUTO/GPS PATH의 E-stop에서만 `E` 명령을 보내며, 검증 완료된 MANUAL E-stop
+  우회 정책은 그대로 유지함.
+- [업로드 완료/실차 미검증] ROS 코드 빌드 및 Arduino Uno(/dev/ttyACM0) 펌웨어
+  업로드 완료. 바퀴를 띄운 상태의 E-stop 정지시간·충격 확인 후 실차 적용 필요.
+
+===============================================================================
+[2026-09-03 이번 대화 변경사항 최종 정리]
+===============================================================================
+
+1. MANUAL E-stop 정책 및 검증 상태
+----------------------------------
+- MANUAL 모드는 LiDAR 장애물 E-stop과 동적 E-stop을 우회한다.
+- MANUAL에서 전진, 후진, 좌회전, 우회전이 모두 허용되는 것을 실차 검증 완료했다.
+- AUTO와 GPS PATH에서는 LiDAR 장애물 E-stop과 동적 E-stop을 계속 적용한다.
+- 명령 timeout, 모드 timeout, 휴대폰 heartbeat, Arduino watchdog은 MANUAL에서도
+  계속 적용하며 연결이나 명령이 끊기면 정지한다.
+
+2. 물리 비상정지 장치 현황
+--------------------------
+- 현재 차량에는 별도의 물리 킬스위치가 없다.
+- 따라서 현재 정지는 ROS 안전 로직, 통신 timeout 및 Arduino watchdog에 의존한다.
+- 물리 킬스위치는 설치 완료 항목이 아니며 향후 안전 보완 항목으로 유지한다.
+
+3. E-stop 급정지 변경
+---------------------
+- PID 게인만 낮추면 정지 응답이 느려질 수 있으므로 PID 게인을 단순 축소하지 않았다.
+- ROS Arduino 브리지에서 AUTO/GPS E-stop 또는 E-stop 상태 토픽 단절 시 Arduino로
+  전용 `E` 명령을 보낸다.
+- Arduino는 `E` 수신 즉시 일반 DECEL_RATE 램프를 우회하고 commandSpeedKmh,
+  rampedSpeedKmh, PI integral, requestedDrivePWM 및 실제 drivePWMValue를 0으로 만든다.
+- 수정 파일:
+  - sketch_aug/sketch_aug.ino
+  - src/t870_control/t870_control/arduino_drive_node.py
+- ROS 단위시험 10개 통과 및 t870_control symlink-install 빌드 성공.
+- Arduino Uno는 /dev/ttyACM0에서 확인했고 수정 펌웨어 업로드까지 완료했다.
+- 남은 검증: 바퀴를 띄운 상태에서 E-stop PWM 즉시 차단, 정지시간, 정지거리,
+  기구 충격과 전류를 확인한 뒤 실차 시험한다.
+
+4. 현장 작업 방침
+-----------------
+- 카메라 최종 검증과 조정은 현장에서 진행한다.
+- 사용자가 나중에 "현장 가서 할 것 알려줘"라고 요청하면 위의 12개 현장
+  체크리스트를 빠짐없이 안내한다.
+- 특히 현장 속도시험 때 MANUAL/AUTO 적정 속도와 주행 PI/PID·피드포워드를
+  계산하고, E-stop 정지시간·정지거리도 함께 측정한다.
+- 측정 결과에 따라 E-stop 관련 제어값과 Arduino 스케치를 수정한 뒤 Arduino에
+  다시 업로드하도록 안내한다.
+
+===============================================================================
+[2026-09-04~05 장치 연결·GPS 기록시험·지도 확인 최신 정리]
+===============================================================================
+
+1. USB 장치 연결 상태
+---------------------
+- 2026-09-03 23:55 확인 당시 장치 번호:
+  - Arduino Uno: /dev/ttyACM2
+  - Holybro Pixhawk 6C 주 인터페이스(if00): /dev/ttyACM0
+  - Holybro Pixhawk 6C 보조 인터페이스(if02): /dev/ttyACM1
+  - SMC-2000 u-blox GPS: /dev/ttyACM3
+  - RPLIDAR C1 CP2102N: /dev/ttyUSB0
+- ttyACM 번호는 USB 재연결 시 변경될 수 있으므로 실제 실행에서는 아래 고정
+  by-id 경로를 우선 사용한다.
+  - Arduino: /dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_34331323136351211280-if00
+  - Pixhawk: /dev/serial/by-id/usb-Holybro_Pixhawk6C_45002F001451333531373234-if00
+  - GPS: /dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00
+  - LiDAR: /dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_dc29dffaaa31f111b5fb935f30d20014-if00-port0
+- 과거 기록의 Arduino /dev/ttyACM0 표기는 당시 연결 순서의 일시적 번호이며,
+  고정 장치 식별값이 아니다.
+
+2. MAVROS 실행 포트 정정
+------------------------
+- MAVROS는 Arduino 포트가 아니라 Pixhawk if00 포트에 연결해야 한다.
+- 위 확인 시점의 짧은 포트는 /dev/ttyACM0이며 고정 by-id 경로 사용을 권장한다.
+- 필수 설정: system_id=255, component_id=191, target_system_id=1,
+  target_component_id=1, baudrate=921600.
+
+3. 네트워크 주소 확인 기록
+--------------------------
+- 2026-09-04 확인 당시 Wi-Fi 인터페이스 wlp3s0 주소는 172.20.10.10/28,
+  기본 게이트웨이는 172.20.10.1이었다.
+- 웹 제어 포트가 8080이면 당시 접속 주소는 http://172.20.10.10:8080 이다.
+- IP는 핫스팟 재연결 시 바뀔 수 있으므로 매번 다시 확인한다.
+
+4. Bird's-Eye View 적용 상태
+----------------------------
+- C920e 차선 및 정지선 영상 알고리즘에 Bird's-Eye View 원근변환이 적용돼 있다.
+- 처리 순서: 원본 영상 -> 사다리꼴 ROI -> Bird's-Eye View -> 차선 후보 검출 ->
+  좌우 안쪽 차선 선택 -> 중앙 경로 -> /cmd_vel/lane.
+- LiDAR RRT와 GPS 경로 알고리즘에는 Bird's-Eye View를 사용하지 않는다.
+- 최종 카메라 각도, ROI, Canny 및 원근변환 기준은 현장에서 조정한다.
+
+5. GPS 이동 경로 기록시험 결과
+-------------------------------
+- 차량 전체 구동 없이 t870_gps_record.launch.py만 사용해 GPS 기록시험을 수행했다.
+- 시험 설정: path_name=gps_move_test, minimum_distance_m=0.5,
+  start_recording=true.
+- [완료/검증] GPS 점 50개가 정상 저장됐다.
+- 인접점 누적거리 약 29.79m, 시작점과 마지막 점 사이 직선거리 약 22.21m.
+- 위경도 범위:
+  - longitude 129.086820 ~ 129.087083
+  - latitude 35.075228 ~ 35.075303
+- UTM zone: 52N.
+- 저장 파일:
+  - gps_recordings/gps_move_test.csv
+  - gps_recordings/gps_move_test.txt
+- 같은 path_name 파일이 존재하면 안전상 덮어쓰지 않으므로 다음 시험은 새로운
+  이름을 사용한다.
+
+6. GPS 경로 시각화
+------------------
+- 실시간 ROS 경로 토픽: /gps/recorded_path
+- 점 개수 토픽: /gps/recorded_point_count
+- RViz 설정: Fixed Frame=utm, Path 표시 토픽=/gps/recorded_path.
+- 기록 노드 종료 후에는 기존 Path를 새 RViz 구독자에게 재전송하지 않으므로,
+  RViz를 먼저 실행하고 GPS 기록을 시작해야 실시간 표시가 확실하다.
+- 지도 확인용 KML 변환 완료:
+  gps_recordings/gps_move_test.kml
+- KML에는 WGS84 위경도 GPS 점 50개가 들어 있으며 Google Earth 또는 QGIS에서
+  열 수 있다. Google My Maps 파일 가져오기는 Google 계정 로그인이 필요하다.

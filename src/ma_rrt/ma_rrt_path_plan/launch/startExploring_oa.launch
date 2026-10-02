@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<launch>
+    <node pkg="ma_rrt_path_plan" type="main_oa.py" name="ma_rrt_path_plan_node" output="screen">
+        <param name="desiredWaypointsFrequency" value="5" type="int" />
+        <param name="odom_topic" value="/odometry" />
+        <param name="world_frame" value="PandarXT-16" />
+        <param name="publishWaypoints" type="bool" value="true" />
+    </node>
+
+    <node pkg="ma_rrt_path_plan" type="track_oa.py" name="erp42_location" output="screen">
+        <!-- 필요한 경우 추가 파라미터 설정 -->
+    </node>
+
+    <!-- 주석 처리된 노드: 필요시 활성화 -->
+    <!--
+    <node pkg="ma_rrt_path_plan" type="ERP42_status1.py" name="erp42_status" output="screen">
+    </node>
+    -->
+
+    <!-- RViz 노드 수정 -->
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ma_rrt_path_plan)/rviz/innovation.rviz" output="screen" />
+</launch>

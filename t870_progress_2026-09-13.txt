@@ -1,0 +1,182 @@
+T870 작업 기록 - 2026-09-13
+============================
+
+- mission.txt 인수인계 명세를 src/t870_control에 구현함.
+- 신규 모듈: mission_common, mission_zone_manager, mission_mux,
+  obstacle_avoidance, emergency_stop, timed_parking, parallel_park, t_park,
+  traffic_light, lane_signal, webcam_pub.
+- Mux 출력 `/cmd_vel/mission_auto`, `/cmd_vel/mission_gps`를 기존
+  remote_mode_control_node의 AUTO/GPS 입력으로 연결함.
+- GPS follower에 `/t870/set_gps_path` String 구독 및 안전한 경로
+  핫리로드 기능을 추가함. 잘못된 파일은 기존 경로를 유지함.
+- t870_missions.launch.py 추가 및 t870_lane_autonomy.launch.py 통합.
+- 안전 기본값: 미션 범위 전부 비활성, parking_armed=false,
+  명령 timeout 0.5초, 주차 LiDAR 확인 필수.
+- ESTOP 감시구간 진입만으로 정지하지 않고 실제 감지 신호일 때만 정지.
+- setup.py console_scripts에 신규 9개 실행 노드 등록.
+- Python 문법검사 통과, install_t870 빌드 성공, 기존 pytest 10개 통과,
+  launch 인자 로딩 확인 완료.
+- 현장 waypoint 범위, 주차 시간/조향, 비전 검출 모델은 아직 실측값 필요.
+- 상세 사용법: T870_MISSIONS.md
+
+GPS 상대경로 추종 시험 및 수정
+-------------------------------
+
+- 휴대폰 없이 물리 조종기만 운용하도록 remote_mode_control_node에
+  startup_mode 파라미터를 추가함.
+- 터미널 2에서 startup_control_mode:=GPS,
+  require_operator_heartbeat:=false로 실행하면 휴대폰 접속 없이 GPS 명령이
+  준비되며, 실제 구동 허용은 메인 Arduino의 물리 D6 AUTO가 담당한다.
+- 휴대폰/카메라의 `/vision/traffic_stop`이 GPS 모드까지 차단하던 문제 확인.
+  traffic_stop_in_gps_mode=false를 기본값으로 추가해 차선 AUTO에서만 적용.
+- 첫 GPS 시험에서 명령 전달 체인 확인 완료:
+  /cmd_vel/gps -> /cmd_vel/gps_safe -> /cmd_vel/mission_gps -> /cmd_vel 모두 정상.
+  0.30 m/s 명령은 Arduino에 1.08 km/h로 전달됨.
+- 저속 토크 확보를 위해 현재 시험속도는 0.55 m/s로 변경.
+- GPS 시험 조향 상한을 gps_follow_max_steer_rad:=0.12로 제한.
+- diqkf.csv는 distance/angle 상대경로이며 902개 포인트를 정상 로드함.
+- diqkf_t870_utm.csv 절대경로 시작점은 당시 차량 위치와 약 200~300 m
+  떨어져 있어 현재 시험에 사용하지 않음.
+- 상대경로를 위치만 고정하고 헤딩 값만 차량 방향에 맞춘 이전 방식은 잘못됨.
+  경로 좌표는 고정 방위인데 차량 방향만 맞춘 것으로 계산되어 실제 차량이
+  경로와 다른 방향으로 진행했고 cross-track error가 5 m를 넘어 정지,
+  이후 약 207 m까지 커지는 현상을 로그로 확인함.
+- 최종 수정: 상대경로 시작 후 AUTO 출력은 0으로 유지하고, 운전자가 MANUAL로
+  0.30 m/s 이상 직진하여 GPS course를 확보하면 경로 좌표 전체를 실제
+  진행방향으로 회전·고정한다. 방향 확보 전 AUTO 출발은 금지됨.
+- 정상 준비 로그:
+  `Relative route rotated to measured startup course; ... AUTO is now ready`
+- 최종 시험 순서:
+  1) MANUAL/중립에서 터미널 2 실행
+  2) MANUAL로 원하는 출발방향을 따라 2~3 m 이상 직진
+  3) 위 AUTO ready 로그 확인
+  4) 정지 및 스로틀 중립
+  5) D6 AUTO 전환 후 1초 정지 뒤 GPS 추종 확인
+- LiDAR/정지 로그도 확인함. RRT avoidance_active=false였고, LiDAR 전방
+  장애물 감지로 일시 E-stop이 작동한 기록이 있음. 안전 기능은 유지함.
+- 최종 상대경로 방향 회전 수정 후 Python 문법검사, install_t870 빌드,
+  기존 pytest 10개 모두 통과함.
+- 위 최종 방향 학습 방식은 아직 실차 재시험 전이다.
+
+AUTO 5 km/h 및 PI 설정
+----------------------
+
+- GPS AUTO 목표속도를 1.3889 m/s(정확히 5.0 km/h)로 변경.
+- 기존 Kp=22, Ki=8은 MANUAL용으로 유지.
+- AUTO 전용 Kp=16, Ki=5 적용.
+- 적분 폭주 방지를 위해 AUTO integral limit +/-10,
+  MANUAL integral limit +/-20을 추가.
+- 기존 피드포워드 FF_OFFSET=6.4, FF_GAIN=17.9는 유지.
+  5 km/h 피드포워드는 약 PWM 95.9.
+- Arduino 메인 펌웨어 컴파일 성공: flash 12254 bytes(37%), RAM 1024(50%).
+- ROS install_t870 재빌드 성공 및 pytest 10개 통과.
+- 당시 메인 Arduino USB 포트가 없어 업로드하지 못했으나, 이후 2026-09-13
+  `/dev/ttyACM0`(일련번호 34331323136351211280)에 최신 펌웨어 업로드 완료.
+  avrdude가 flash 12764 bytes 쓰기 및 read-back 검증 성공.
+- 5 km/h 실차 시험 후 actual speed, PWM, 오버슈트를 보고 재튜닝 필요.
+
+조종기 전용 운용 추가:
+- 휴대폰을 사용하지 않아도 launch 인자 `startup_control_mode`로 ROS 시작
+  모드를 AUTO 또는 GPS로 지정할 수 있게 remote_mode_control_node 수정.
+- `require_operator_heartbeat:=false`로 휴대폰 heartbeat 없이 운용 가능.
+- 물리 D6 MANUAL/AUTO 스위치는 메인 Arduino의 최종 안전 게이트로 유지됨.
+- GPS 경로시험은 `startup_control_mode:=GPS`, 차선시험은 `AUTO` 사용.
+- install_t870 재빌드 성공, 기존 pytest 10개 통과.
+
+Pure Pursuit 조향 및 속도 구간별 LAD 추가
+------------------------------------------
+
+- GPS AUTO 조향은 `gps_path_follower_node.py`에서 이미 Pure Pursuit 식
+  `atan2(2 * wheelbase * sin(alpha), target_distance)`을 사용하고 있음을 확인.
+- Pure Pursuit 출력은 `/cmd_vel/gps`의 `angular.z`로 전달되고,
+  `pixhawk_vehicle_interface_node.py`가 Pixhawk PWM으로 변환한다.
+- 메인 Arduino 조향은 PI가 아니라 포텐셔미터 위치 오차에 따른 비례형 PWM
+  제어이다. 현재 STEER_DEADBAND=15, MIN_PWM=45, MAX_PWM=100,
+  SLOW_RANGE=150이며 조향 stall 감지는 오검출 때문에 비활성 상태이다.
+- 기존 `minimum_lookahead + speed_gain * speed` 선형 LAD 방식은 호환용으로
+  남기고, 기본 제어는 속도 구간별 LAD 방식으로 변경함.
+- 구간별 기본 LAD:
+    0~2 km/h   -> 1.5 m
+    2~4 km/h   -> 2.2 m
+    4~6 km/h   -> 3.2 m
+    6~8 km/h   -> 4.4 m
+    8 km/h 초과 -> 6.0 m
+- launch에서 다음 인자로 현장 조정 가능:
+  `gps_lad_2kmh_m`, `gps_lad_4kmh_m`, `gps_lad_6kmh_m`,
+  `gps_lad_8kmh_m`, `gps_lad_10kmh_m`.
+- 10 km/h 목표속도는 `gps_follow_speed_mps:=2.7778`로 명시한다.
+  이후 사용자 요청으로 launch 기본 GPS 목표속도도 10 km/h(2.7778 m/s)로
+  변경함. 직전 2 km/h 시험 명령의 0.5556 m/s는 더 이상 사용하지 않음.
+- AUTO 반응 조정 우선순위:
+  1) 해당 속도 구간 LAD (작게 하면 민감, 크게 하면 완만)
+  2) `gps_follow_max_steer_rad` (현재 기본 0.12 rad)
+  3) `maximum_steering_rate_rad_s`, `steering_filter_alpha`, deadband
+  4) ROS 명령은 정상인데 모터만 느릴 때 Arduino 조향 PWM 값 조정
+- 새 LAD 경계 테스트를 추가했고 전체 pytest 18개 통과.
+- Python 문법검사 및 install_t870의 t870_control 빌드 성공.
+- 현재 USB 장치/ROS 노드가 연결·실행되지 않아 구간별 LAD 및 10 km/h
+  Pure Pursuit 실차 검증은 아직 하지 않음. 반드시 저속부터 단계적으로 시험.
+- 10 km/h 시험에서 저속 코너 조기 진입 후, 직선 가속 시 좌우 진동과 경로
+  이탈이 발생함. 저속 코너 반응을 늦추고 고속 안정성을 높이기 위해 위 LAD로
+  재조정함. 조향 지연 감소를 위해 steering_filter_alpha 0.25->0.40,
+  maximum_steering_rate_rad_s 0.35->0.60으로 변경함.
+- 실제 선택 LAD 확인용 `/gps/lookahead_distance` Float32 토픽 추가.
+- LAD는 사용자 요청에 따라 각 속도 구간에서 고정값을 사용하도록 변경함.
+  2/4/6/8/10 km/h 기준값은 각각 1.5/2.2/3.2/4.4/6.0 m이며,
+  경계 사이에서 선형 보간하지 않는다.
+- 변경 후 pytest 19개 통과 및 t870_control 빌드 성공, 실차 재검증 전.
+- GPS follower에 실행별 자동 tracking CSV 로거 추가. 파일명은
+  `gps_recordings/gps_tracking_YYYYMMDD_HHMMSS.csv`이며 실제 lon/lat/UTM,
+  속도, heading, waypoint, 횡오차, LAD, 목표점, alpha, raw/filtered 조향,
+  명령속도와 상태를 매 제어 주기에 기록하고 즉시 flush한다.
+- `record_gps_path:=false`와 별개로 tracking CSV는 기본 활성화된다.
+- CSV 생성 smoke test, pytest 19개 및 t870_control 빌드 통과.
+- 2026-09-14 tracking CSV 2회 분석 결과:
+  1차 최대 9.51 km/h, 115.2초에 route error 5.32 m로 정지.
+  2차 최대 7.11 km/h, 50.15초에 route error 5.04 m로 정지.
+  heading과 GPS course 중앙 오차가 각각 33.5도/26.8도였고 최대
+  168.4도/147.0도, raw steering 최대값 고정 비율도 71.6%/83.9%로 확인.
+- 원인에 따라 heading 우선순위를 수정함. 0.30 m/s 이상에서는 GPS velocity
+  course를 최우선 사용하고, 저속/정지에서는 최근 GPS course를 3초 유지한 뒤
+  경로 접선을 사용한다. 보정값 없는 raw IMU yaw는 절대경로 조향에 사용하지 않음.
+- GPS course 순간 변화는 최대 1.0 rad/s로 제한하고 +/-pi wrap을 처리함.
+- tracking CSV에 `heading_source` 필드를 추가함.
+- heading 수정 후 pytest 21개 통과 및 t870_control 빌드 성공, 실차 재검증 전.
+
+diqkf 상대경로 코너 완화
+------------------------
+
+- 원본 `gps_recordings/diqkf.csv`에는 1 m 사이에서 최대 약 91.8도의 방향
+  변화가 발생하는 직각 코너가 여러 곳 있었음.
+- 원본은 보존하고 좌표 평활화 후 1 m 간격으로 재샘플링한
+  `gps_recordings/diqkf_smooth.csv`를 생성함.
+- 스무딩 경로는 급격한 방향 변화가 최대 약 7.15도/m로 감소했으며,
+  902개/901 m 원본에서 867개/약 865.05 m 경로로 코너가 둥글게 단축됨.
+- 재생성 도구: `src/t870_control/tools/smooth_relative_path.py`.
+  기본 192 passes, 출력 간격 1.0 m이며 원본을 덮어쓰지 않고 별도 출력 권장.
+- GPS 시험 시 `gps_follow_path_file`을
+  `gps_recordings/diqkf_smooth.csv`로 지정해야 새 경로가 사용됨.
+- 실제 도로 폭/경계와 대조하지 않은 기하학적 스무딩이므로 저속 육안 확인 필수.
+- 추가로 곡률을 덜 완만하게 한 96-pass 경로를 생성함:
+  `diqkf_smooth_tighter.csv`(차량 제어용 상대경로)와
+  `diqkf_smooth_tighter_longitude_latitude.csv`(QGIS용 EPSG:4326).
+  최대 방향 변화는 약 10.13도/m, 경로 길이는 약 875.90 m.
+- 사용자 요청에 따라 앞으로 새로 만드는 확인/편집용 CSV는 항상
+  `longitude,latitude` 필드를 포함한 WGS84(EPSG:4326) 버전도 함께 생성한다.
+- QGIS에서 최종 수정한 `gps_recordings/1.csv`(WGS84, 877점)를 새 GPS
+  tracking 기준 경로로 지정함.
+- GPS follower가 longitude/latitude CSV를 직접 읽고 첫 좌표로 UTM zone을
+  자동 선택해 투영하도록 `load_route()`를 확장함. `1.csv`는 zone 52N,
+  EPSG:32652로 변환되어 기존 Pure Pursuit 계산에 입력됨.
+- `t870_lane_autonomy.launch.py`의 `gps_follow_path_file` 기본값을 `1.csv`의
+  절대경로로 설정함. `enable_gps_follower`와 STOP 안전 기본값은 변경하지 않음.
+- 두 차례 tracking CSV 분석 후 waypoint/GPS 보호 추가:
+  최초 위치만 전체 경로에서 nearest waypoint를 찾고 이후에는 이전 index 기준
+  뒤 5점/앞 30점만 검색하며, 한 주기 최대 10점까지만 전진하도록 제한함.
+- GPS fix는 이전 정상 위치에서 `3.0 m + 6.0 m/s * dt`보다 큰 이동이면
+  거부한다. 거부 fix는 timeout을 갱신하지 않으므로 연속 이상 시 기존 1초
+  sensor timeout으로 안전 정지하며 자동으로 큰 좌표 이동을 수용하지 않음.
+- 과거 CSV 재검사에서 1차 주행 64개, 2차 주행 2개의 위치 이상 샘플을 새
+  기준이 거부하는 것을 확인함.
+- E-stop 관련 코드는 사용자 요청대로 전혀 변경하지 않음.
+- GPS/waypoint 보호 단위 테스트 포함 pytest 24개 및 빌드 통과.

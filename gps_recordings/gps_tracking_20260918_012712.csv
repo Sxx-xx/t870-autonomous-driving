@@ -1,0 +1,1 @@
+elapsed_sec,longitude,latitude,utm_easting_m,utm_northing_m,speed_mps,heading_rad,heading_source,waypoint_index,route_error_m,lookahead_m,target_index,target_easting_m,target_northing_m,alpha_rad,raw_steering_rad,filtered_steering_rad,command_speed_mps,wheel_speed_mps,speed_error_mps,state

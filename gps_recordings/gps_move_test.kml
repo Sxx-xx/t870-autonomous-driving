@@ -1,0 +1,870 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="gps_move_test" id="gps_move_test">
+	<SimpleField name="index" type="string"></SimpleField>
+	<SimpleField name="ros_time_sec" type="string"></SimpleField>
+	<SimpleField name="latitude" type="float"></SimpleField>
+	<SimpleField name="longitude" type="float"></SimpleField>
+	<SimpleField name="altitude_m" type="string"></SimpleField>
+	<SimpleField name="utm_easting_m" type="string"></SimpleField>
+	<SimpleField name="utm_northing_m" type="string"></SimpleField>
+	<SimpleField name="utm_zone" type="string"></SimpleField>
+	<SimpleField name="fix_status" type="string"></SimpleField>
+	<SimpleField name="covariance_x_m2" type="string"></SimpleField>
+	<SimpleField name="covariance_y_m2" type="string"></SimpleField>
+	<SimpleField name="target_speed" type="string"></SimpleField>
+</Schema>
+<Folder><name>gps_move_test</name>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">0</SimpleData>
+		<SimpleData name="ros_time_sec">1788525547.811565638</SimpleData>
+		<SimpleData name="latitude">35.0753023333</SimpleData>
+		<SimpleData name="longitude">129.0870461667</SimpleData>
+		<SimpleData name="altitude_m">-11.500</SimpleData>
+		<SimpleData name="utm_easting_m">507935.8240</SimpleData>
+		<SimpleData name="utm_northing_m">3881397.3231</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">10.9892</SimpleData>
+		<SimpleData name="covariance_y_m2">10.9892</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870461667,35.0753023333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">1</SimpleData>
+		<SimpleData name="ros_time_sec">1788525559.067748308</SimpleData>
+		<SimpleData name="latitude">35.075303</SimpleData>
+		<SimpleData name="longitude">129.0870516667</SimpleData>
+		<SimpleData name="altitude_m">-12.000</SimpleData>
+		<SimpleData name="utm_easting_m">507936.3254</SimpleData>
+		<SimpleData name="utm_northing_m">3881397.3974</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">10.9892</SimpleData>
+		<SimpleData name="covariance_y_m2">10.9892</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870516667,35.075303</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">2</SimpleData>
+		<SimpleData name="ros_time_sec">1788525574.064573288</SimpleData>
+		<SimpleData name="latitude">35.0753021667</SimpleData>
+		<SimpleData name="longitude">129.0870571667</SimpleData>
+		<SimpleData name="altitude_m">-12.700</SimpleData>
+		<SimpleData name="utm_easting_m">507936.8269</SimpleData>
+		<SimpleData name="utm_northing_m">3881397.3055</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870571667,35.0753021667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">3</SimpleData>
+		<SimpleData name="ros_time_sec">1788525597.068699121</SimpleData>
+		<SimpleData name="latitude">35.0752981667</SimpleData>
+		<SimpleData name="longitude">129.0870598333</SimpleData>
+		<SimpleData name="altitude_m">-13.800</SimpleData>
+		<SimpleData name="utm_easting_m">507937.0704</SimpleData>
+		<SimpleData name="utm_northing_m">3881396.8621</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870598333,35.0752981667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">4</SimpleData>
+		<SimpleData name="ros_time_sec">1788525602.309190273</SimpleData>
+		<SimpleData name="latitude">35.0752966667</SimpleData>
+		<SimpleData name="longitude">129.0870653333</SimpleData>
+		<SimpleData name="altitude_m">-13.800</SimpleData>
+		<SimpleData name="utm_easting_m">507937.5720</SimpleData>
+		<SimpleData name="utm_northing_m">3881396.6962</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870653333,35.0752966667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">5</SimpleData>
+		<SimpleData name="ros_time_sec">1788525608.307871819</SimpleData>
+		<SimpleData name="latitude">35.075295</SimpleData>
+		<SimpleData name="longitude">129.0870705</SimpleData>
+		<SimpleData name="altitude_m">-13.700</SimpleData>
+		<SimpleData name="utm_easting_m">507938.0432</SimpleData>
+		<SimpleData name="utm_northing_m">3881396.5118</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870705,35.075295</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">6</SimpleData>
+		<SimpleData name="ros_time_sec">1788525637.809691906</SimpleData>
+		<SimpleData name="latitude">35.0752913333</SimpleData>
+		<SimpleData name="longitude">129.0870738333</SimpleData>
+		<SimpleData name="altitude_m">-11.000</SimpleData>
+		<SimpleData name="utm_easting_m">507938.3474</SimpleData>
+		<SimpleData name="utm_northing_m">3881396.1054</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870738333,35.0752913333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">7</SimpleData>
+		<SimpleData name="ros_time_sec">1788525658.068053007</SimpleData>
+		<SimpleData name="latitude">35.0752868333</SimpleData>
+		<SimpleData name="longitude">129.0870723333</SimpleData>
+		<SimpleData name="altitude_m">-10.400</SimpleData>
+		<SimpleData name="utm_easting_m">507938.2111</SimpleData>
+		<SimpleData name="utm_northing_m">3881395.6062</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870723333,35.0752868333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">8</SimpleData>
+		<SimpleData name="ros_time_sec">1788525665.310545921</SimpleData>
+		<SimpleData name="latitude">35.0752848333</SimpleData>
+		<SimpleData name="longitude">129.0870773333</SimpleData>
+		<SimpleData name="altitude_m">-10.300</SimpleData>
+		<SimpleData name="utm_easting_m">507938.6671</SimpleData>
+		<SimpleData name="utm_northing_m">3881395.3848</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870773333,35.0752848333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">9</SimpleData>
+		<SimpleData name="ros_time_sec">1788525676.558546543</SimpleData>
+		<SimpleData name="latitude">35.0752831667</SimpleData>
+		<SimpleData name="longitude">129.0870825</SimpleData>
+		<SimpleData name="altitude_m">-10.300</SimpleData>
+		<SimpleData name="utm_easting_m">507939.1383</SimpleData>
+		<SimpleData name="utm_northing_m">3881395.2004</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.6176</SimpleData>
+		<SimpleData name="covariance_y_m2">7.6176</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870825,35.0752831667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">10</SimpleData>
+		<SimpleData name="ros_time_sec">1788525700.814763308</SimpleData>
+		<SimpleData name="latitude">35.0752806667</SimpleData>
+		<SimpleData name="longitude">129.087077</SimpleData>
+		<SimpleData name="altitude_m">-7.500</SimpleData>
+		<SimpleData name="utm_easting_m">507938.6372</SimpleData>
+		<SimpleData name="utm_northing_m">3881394.9227</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.5350</SimpleData>
+		<SimpleData name="covariance_y_m2">7.5350</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.087077,35.0752806667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">11</SimpleData>
+		<SimpleData name="ros_time_sec">1788525701.315685272</SimpleData>
+		<SimpleData name="latitude">35.0752791667</SimpleData>
+		<SimpleData name="longitude">129.0870685</SimpleData>
+		<SimpleData name="altitude_m">-6.500</SimpleData>
+		<SimpleData name="utm_easting_m">507937.8624</SimpleData>
+		<SimpleData name="utm_northing_m">3881394.7557</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.5350</SimpleData>
+		<SimpleData name="covariance_y_m2">7.5350</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870685,35.0752791667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">12</SimpleData>
+		<SimpleData name="ros_time_sec">1788525702.816922426</SimpleData>
+		<SimpleData name="latitude">35.0752753333</SimpleData>
+		<SimpleData name="longitude">129.0870641667</SimpleData>
+		<SimpleData name="altitude_m">-6.400</SimpleData>
+		<SimpleData name="utm_easting_m">507937.4677</SimpleData>
+		<SimpleData name="utm_northing_m">3881394.3303</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.5350</SimpleData>
+		<SimpleData name="covariance_y_m2">7.5350</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870641667,35.0752753333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">13</SimpleData>
+		<SimpleData name="ros_time_sec">1788525703.573448658</SimpleData>
+		<SimpleData name="latitude">35.0752731667</SimpleData>
+		<SimpleData name="longitude">129.0870555</SimpleData>
+		<SimpleData name="altitude_m">-6.300</SimpleData>
+		<SimpleData name="utm_easting_m">507936.6778</SimpleData>
+		<SimpleData name="utm_northing_m">3881394.0893</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">7.5350</SimpleData>
+		<SimpleData name="covariance_y_m2">7.5350</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870555,35.0752731667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">14</SimpleData>
+		<SimpleData name="ros_time_sec">1788525703.822011471</SimpleData>
+		<SimpleData name="latitude">35.0752723333</SimpleData>
+		<SimpleData name="longitude">129.0870493333</SimpleData>
+		<SimpleData name="altitude_m">-6.100</SimpleData>
+		<SimpleData name="utm_easting_m">507936.1156</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.9964</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870493333,35.0752723333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">15</SimpleData>
+		<SimpleData name="ros_time_sec">1788525704.081335783</SimpleData>
+		<SimpleData name="latitude">35.0752715</SimpleData>
+		<SimpleData name="longitude">129.0870438333</SimpleData>
+		<SimpleData name="altitude_m">-5.900</SimpleData>
+		<SimpleData name="utm_easting_m">507935.6143</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.9035</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870438333,35.0752715</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">16</SimpleData>
+		<SimpleData name="ros_time_sec">1788525704.565947056</SimpleData>
+		<SimpleData name="latitude">35.0752698333</SimpleData>
+		<SimpleData name="longitude">129.0870376667</SimpleData>
+		<SimpleData name="altitude_m">-5.400</SimpleData>
+		<SimpleData name="utm_easting_m">507935.0523</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.7182</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870376667,35.0752698333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">17</SimpleData>
+		<SimpleData name="ros_time_sec">1788525705.081592321</SimpleData>
+		<SimpleData name="latitude">35.0752681667</SimpleData>
+		<SimpleData name="longitude">129.0870321667</SimpleData>
+		<SimpleData name="altitude_m">-4.900</SimpleData>
+		<SimpleData name="utm_easting_m">507934.5510</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.5330</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870321667,35.0752681667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">18</SimpleData>
+		<SimpleData name="ros_time_sec">1788525707.073324442</SimpleData>
+		<SimpleData name="latitude">35.0752663333</SimpleData>
+		<SimpleData name="longitude">129.0870255</SimpleData>
+		<SimpleData name="altitude_m">-3.900</SimpleData>
+		<SimpleData name="utm_easting_m">507933.9434</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.3291</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870255,35.0752663333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">19</SimpleData>
+		<SimpleData name="ros_time_sec">1788525708.816715240</SimpleData>
+		<SimpleData name="latitude">35.0752646667</SimpleData>
+		<SimpleData name="longitude">129.0870196667</SimpleData>
+		<SimpleData name="altitude_m">-3.100</SimpleData>
+		<SimpleData name="utm_easting_m">507933.4117</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.1438</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870196667,35.0752646667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">20</SimpleData>
+		<SimpleData name="ros_time_sec">1788525709.820147276</SimpleData>
+		<SimpleData name="latitude">35.0752635</SimpleData>
+		<SimpleData name="longitude">129.0870123333</SimpleData>
+		<SimpleData name="altitude_m">-2.500</SimpleData>
+		<SimpleData name="utm_easting_m">507932.7433</SimpleData>
+		<SimpleData name="utm_northing_m">3881393.0139</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870123333,35.0752635</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">21</SimpleData>
+		<SimpleData name="ros_time_sec">1788525710.570931196</SimpleData>
+		<SimpleData name="latitude">35.0752621667</SimpleData>
+		<SimpleData name="longitude">129.0870065</SimpleData>
+		<SimpleData name="altitude_m">-2.100</SimpleData>
+		<SimpleData name="utm_easting_m">507932.2116</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.8655</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0870065,35.0752621667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">22</SimpleData>
+		<SimpleData name="ros_time_sec">1788525711.077121019</SimpleData>
+		<SimpleData name="latitude">35.0752615</SimpleData>
+		<SimpleData name="longitude">129.086999</SimpleData>
+		<SimpleData name="altitude_m">-2.000</SimpleData>
+		<SimpleData name="utm_easting_m">507931.5279</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.7910</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086999,35.0752615</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">23</SimpleData>
+		<SimpleData name="ros_time_sec">1788525712.324482918</SimpleData>
+		<SimpleData name="latitude">35.0752601667</SimpleData>
+		<SimpleData name="longitude">129.0869918333</SimpleData>
+		<SimpleData name="altitude_m">-2.000</SimpleData>
+		<SimpleData name="utm_easting_m">507930.8747</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.6426</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869918333,35.0752601667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">24</SimpleData>
+		<SimpleData name="ros_time_sec">1788525713.083941698</SimpleData>
+		<SimpleData name="latitude">35.0752588333</SimpleData>
+		<SimpleData name="longitude">129.0869845</SimpleData>
+		<SimpleData name="altitude_m">-2.000</SimpleData>
+		<SimpleData name="utm_easting_m">507930.2062</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.4941</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869845,35.0752588333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">25</SimpleData>
+		<SimpleData name="ros_time_sec">1788525714.572123051</SimpleData>
+		<SimpleData name="latitude">35.0752566667</SimpleData>
+		<SimpleData name="longitude">129.0869791667</SimpleData>
+		<SimpleData name="altitude_m">-1.800</SimpleData>
+		<SimpleData name="utm_easting_m">507929.7202</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.2534</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869791667,35.0752566667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">26</SimpleData>
+		<SimpleData name="ros_time_sec">1788525715.572420835</SimpleData>
+		<SimpleData name="latitude">35.0752548333</SimpleData>
+		<SimpleData name="longitude">129.0869728333</SimpleData>
+		<SimpleData name="altitude_m">-1.700</SimpleData>
+		<SimpleData name="utm_easting_m">507929.1430</SimpleData>
+		<SimpleData name="utm_northing_m">3881392.0496</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869728333,35.0752548333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">27</SimpleData>
+		<SimpleData name="ros_time_sec">1788525716.573345661</SimpleData>
+		<SimpleData name="latitude">35.0752525</SimpleData>
+		<SimpleData name="longitude">129.0869666667</SimpleData>
+		<SimpleData name="altitude_m">-1.400</SimpleData>
+		<SimpleData name="utm_easting_m">507928.5810</SimpleData>
+		<SimpleData name="utm_northing_m">3881391.7903</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869666667,35.0752525</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">28</SimpleData>
+		<SimpleData name="ros_time_sec">1788525717.822370529</SimpleData>
+		<SimpleData name="latitude">35.0752506667</SimpleData>
+		<SimpleData name="longitude">129.0869605</SimpleData>
+		<SimpleData name="altitude_m">-1.200</SimpleData>
+		<SimpleData name="utm_easting_m">507928.0190</SimpleData>
+		<SimpleData name="utm_northing_m">3881391.5865</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869605,35.0752506667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">29</SimpleData>
+		<SimpleData name="ros_time_sec">1788525719.079018593</SimpleData>
+		<SimpleData name="latitude">35.0752476667</SimpleData>
+		<SimpleData name="longitude">129.0869548333</SimpleData>
+		<SimpleData name="altitude_m">-1.100</SimpleData>
+		<SimpleData name="utm_easting_m">507927.5026</SimpleData>
+		<SimpleData name="utm_northing_m">3881391.2534</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">8.1225</SimpleData>
+		<SimpleData name="covariance_y_m2">8.1225</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869548333,35.0752476667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">30</SimpleData>
+		<SimpleData name="ros_time_sec">1788525720.325903893</SimpleData>
+		<SimpleData name="latitude">35.0752446667</SimpleData>
+		<SimpleData name="longitude">129.0869498333</SimpleData>
+		<SimpleData name="altitude_m">-0.900</SimpleData>
+		<SimpleData name="utm_easting_m">507927.0471</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.9203</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">6.6564</SimpleData>
+		<SimpleData name="covariance_y_m2">6.6564</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869498333,35.0752446667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">31</SimpleData>
+		<SimpleData name="ros_time_sec">1788525721.085310459</SimpleData>
+		<SimpleData name="latitude">35.0752433333</SimpleData>
+		<SimpleData name="longitude">129.0869431667</SimpleData>
+		<SimpleData name="altitude_m">-1.000</SimpleData>
+		<SimpleData name="utm_easting_m">507926.4394</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.7719</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869431667,35.0752433333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">32</SimpleData>
+		<SimpleData name="ros_time_sec">1788525721.581228018</SimpleData>
+		<SimpleData name="latitude">35.0752436667</SimpleData>
+		<SimpleData name="longitude">129.0869325</SimpleData>
+		<SimpleData name="altitude_m">-1.300</SimpleData>
+		<SimpleData name="utm_easting_m">507925.4669</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.8080</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869325,35.0752436667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">33</SimpleData>
+		<SimpleData name="ros_time_sec">1788525722.084013462</SimpleData>
+		<SimpleData name="latitude">35.0752438333</SimpleData>
+		<SimpleData name="longitude">129.0869228333</SimpleData>
+		<SimpleData name="altitude_m">-1.700</SimpleData>
+		<SimpleData name="utm_easting_m">507924.5856</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.8257</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869228333,35.0752438333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">34</SimpleData>
+		<SimpleData name="ros_time_sec">1788525722.575198174</SimpleData>
+		<SimpleData name="latitude">35.0752435</SimpleData>
+		<SimpleData name="longitude">129.086915</SimpleData>
+		<SimpleData name="altitude_m">-1.800</SimpleData>
+		<SimpleData name="utm_easting_m">507923.8715</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.7882</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086915,35.0752435</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">35</SimpleData>
+		<SimpleData name="ros_time_sec">1788525723.087787628</SimpleData>
+		<SimpleData name="latitude">35.0752431667</SimpleData>
+		<SimpleData name="longitude">129.086908</SimpleData>
+		<SimpleData name="altitude_m">-2.000</SimpleData>
+		<SimpleData name="utm_easting_m">507923.2334</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.7506</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086908,35.0752431667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">36</SimpleData>
+		<SimpleData name="ros_time_sec">1788525723.581062078</SimpleData>
+		<SimpleData name="latitude">35.0752426667</SimpleData>
+		<SimpleData name="longitude">129.0869016667</SimpleData>
+		<SimpleData name="altitude_m">-2.100</SimpleData>
+		<SimpleData name="utm_easting_m">507922.6560</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.6947</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.3542</SimpleData>
+		<SimpleData name="covariance_y_m2">24.3542</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0869016667,35.0752426667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">37</SimpleData>
+		<SimpleData name="ros_time_sec">1788525724.327677011</SimpleData>
+		<SimpleData name="latitude">35.0752416667</SimpleData>
+		<SimpleData name="longitude">129.0868956667</SimpleData>
+		<SimpleData name="altitude_m">-2.000</SimpleData>
+		<SimpleData name="utm_easting_m">507922.1091</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.5833</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.2064</SimpleData>
+		<SimpleData name="covariance_y_m2">24.2064</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868956667,35.0752416667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">38</SimpleData>
+		<SimpleData name="ros_time_sec">1788525725.093685865</SimpleData>
+		<SimpleData name="latitude">35.0752403333</SimpleData>
+		<SimpleData name="longitude">129.0868893333</SimpleData>
+		<SimpleData name="altitude_m">-1.900</SimpleData>
+		<SimpleData name="utm_easting_m">507921.5318</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.4349</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.2064</SimpleData>
+		<SimpleData name="covariance_y_m2">24.2064</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868893333,35.0752403333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">39</SimpleData>
+		<SimpleData name="ros_time_sec">1788525726.327386141</SimpleData>
+		<SimpleData name="latitude">35.0752373333</SimpleData>
+		<SimpleData name="longitude">129.086884</SimpleData>
+		<SimpleData name="altitude_m">-1.500</SimpleData>
+		<SimpleData name="utm_easting_m">507921.0459</SimpleData>
+		<SimpleData name="utm_northing_m">3881390.1018</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">24.2064</SimpleData>
+		<SimpleData name="covariance_y_m2">24.2064</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086884,35.0752373333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">40</SimpleData>
+		<SimpleData name="ros_time_sec">1788525727.578327894</SimpleData>
+		<SimpleData name="latitude">35.075235</SimpleData>
+		<SimpleData name="longitude">129.0868785</SimpleData>
+		<SimpleData name="altitude_m">-1.500</SimpleData>
+		<SimpleData name="utm_easting_m">507920.5447</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.8426</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">35.1056</SimpleData>
+		<SimpleData name="covariance_y_m2">35.1056</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868785,35.075235</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">41</SimpleData>
+		<SimpleData name="ros_time_sec">1788525728.828592539</SimpleData>
+		<SimpleData name="latitude">35.075233</SimpleData>
+		<SimpleData name="longitude">129.086873</SimpleData>
+		<SimpleData name="altitude_m">-1.600</SimpleData>
+		<SimpleData name="utm_easting_m">507920.0435</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.6204</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">14.9769</SimpleData>
+		<SimpleData name="covariance_y_m2">14.9769</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086873,35.075233</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">42</SimpleData>
+		<SimpleData name="ros_time_sec">1788525729.327456474</SimpleData>
+		<SimpleData name="latitude">35.0752326667</SimpleData>
+		<SimpleData name="longitude">129.0868668333</SimpleData>
+		<SimpleData name="altitude_m">-2.100</SimpleData>
+		<SimpleData name="utm_easting_m">507919.4813</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.5829</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868668333,35.0752326667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">43</SimpleData>
+		<SimpleData name="ros_time_sec">1788525729.574720860</SimpleData>
+		<SimpleData name="latitude">35.0752331667</SimpleData>
+		<SimpleData name="longitude">129.0868578333</SimpleData>
+		<SimpleData name="altitude_m">-2.900</SimpleData>
+		<SimpleData name="utm_easting_m">507918.6607</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.6377</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868578333,35.0752331667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">44</SimpleData>
+		<SimpleData name="ros_time_sec">1788525729.819455385</SimpleData>
+		<SimpleData name="latitude">35.0752333333</SimpleData>
+		<SimpleData name="longitude">129.086851</SimpleData>
+		<SimpleData name="altitude_m">-3.500</SimpleData>
+		<SimpleData name="utm_easting_m">507918.0377</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.6556</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086851,35.0752333333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">45</SimpleData>
+		<SimpleData name="ros_time_sec">1788525730.322068691</SimpleData>
+		<SimpleData name="latitude">35.0752333333</SimpleData>
+		<SimpleData name="longitude">129.086843</SimpleData>
+		<SimpleData name="altitude_m">-4.200</SimpleData>
+		<SimpleData name="utm_easting_m">507917.3084</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.6550</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.086843,35.0752333333</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">46</SimpleData>
+		<SimpleData name="ros_time_sec">1788525731.820879936</SimpleData>
+		<SimpleData name="latitude">35.0752316667</SimpleData>
+		<SimpleData name="longitude">129.0868376667</SimpleData>
+		<SimpleData name="altitude_m">-4.300</SimpleData>
+		<SimpleData name="utm_easting_m">507916.8223</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.4697</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868376667,35.0752316667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">47</SimpleData>
+		<SimpleData name="ros_time_sec">1788525733.076650381</SimpleData>
+		<SimpleData name="latitude">35.0752301667</SimpleData>
+		<SimpleData name="longitude">129.0868321667</SimpleData>
+		<SimpleData name="altitude_m">-4.400</SimpleData>
+		<SimpleData name="utm_easting_m">507916.3211</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.3029</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868321667,35.0752301667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">48</SimpleData>
+		<SimpleData name="ros_time_sec">1788525734.080881119</SimpleData>
+		<SimpleData name="latitude">35.0752291667</SimpleData>
+		<SimpleData name="longitude">129.0868253333</SimpleData>
+		<SimpleData name="altitude_m">-4.700</SimpleData>
+		<SimpleData name="utm_easting_m">507915.6982</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.1915</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.8322</SimpleData>
+		<SimpleData name="covariance_y_m2">5.8322</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.0868253333,35.0752291667</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#gps_move_test">
+		<SimpleData name="index">49</SimpleData>
+		<SimpleData name="ros_time_sec">1788525735.076580048</SimpleData>
+		<SimpleData name="latitude">35.075228</SimpleData>
+		<SimpleData name="longitude">129.08682</SimpleData>
+		<SimpleData name="altitude_m">-5.000</SimpleData>
+		<SimpleData name="utm_easting_m">507915.2121</SimpleData>
+		<SimpleData name="utm_northing_m">3881389.0617</SimpleData>
+		<SimpleData name="utm_zone">52N</SimpleData>
+		<SimpleData name="fix_status">0</SimpleData>
+		<SimpleData name="covariance_x_m2">5.7600</SimpleData>
+		<SimpleData name="covariance_y_m2">5.7600</SimpleData>
+		<SimpleData name="target_speed">1.000</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>129.08682,35.075228</coordinates></Point>
+  </Placemark>
+</Folder>
+</Document></kml>

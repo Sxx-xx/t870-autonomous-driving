@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- adaptive_clustering_oa.launch contents -->
+  <node pkg="adaptive_clustering" name="adaptive_clustering_oa" type="adaptive_clustering_oa">
+    <param name="print_fps" value="true"/>
+  </node>
+  
+  <!-- startExploring_oa.launch contents -->
+  <node pkg="ma_rrt_path_plan" type="main_oa.py" name="ma_rrt_path_plan_node" output="screen">
+    <param name="desiredWaypointsFrequency" value="5" type="int" />
+    <param name="odom_topic" value="/odometry" />
+    <param name="world_frame" value="PandarXT-16" />
+    <param name="publishWaypoints" type="bool" value="true" />
+  </node>
+
+  <node pkg="ma_rrt_path_plan" type="track_oa.py" name="erp42_location" output="screen">
+    <!-- 필요한 경우 추가 파라미터 설정 -->
+  </node>
+
+  <!-- RViz 노드 -->
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ma_rrt_path_plan)/rviz/innovation.rviz" output="screen" />
+
+  <!-- Hesai LiDAR launch contents -->
+  <arg name="pcap_file"  default=""/>
+  <arg name="server_ip" default="192.168.1.201"/>
+  <arg name="lidar_recv_port"  default="2368"/>
+  <arg name="gps_port"  default="10110"/>
+  <arg name="start_angle"  default="0"/>
+  <arg name="lidar_type" default="PandarXT-16"/>
+  <arg name="frame_id" default="PandarXT-16"/>
+  <arg name="pcldata_type" default="0"/>
+  <arg name="publish_type" default="points"/>
+  <arg name="timestamp_type" default=""/>
+  <arg name="data_type" default=""/>
+  <arg name="namespace" default="hesai"/>
+  <arg name="lidar_correction_file"  default="$(find hesai_lidar)/config/Pandar16.csv"/>
+  <arg name="multicast_ip"  default=""/>
+  <arg name="coordinate_correction_flag"  default="false"/>
+  <arg name="fixed_frame"  default=""/>
+  <arg name="target_frame"  default=""/>
+
+  <node pkg="hesai_lidar" name="hesai_lidar" ns="$(arg namespace)" type="hesai_lidar_node" output="screen" >
+    <param name="pcap_file" type="string" value="$(arg pcap_file)"/>
+    <param name="server_ip" type="string" value="$(arg server_ip)"/>
+    <param name="lidar_recv_port"  type="int" value="$(arg lidar_recv_port)"/>
+    <param name="gps_port"  type="int" value="$(arg gps_port)"/>
+    <param name="start_angle"  type="double" value="$(arg start_angle)"/>
+    <param name="lidar_type"  type="string" value="$(arg lidar_type)"/>
+    <param name="frame_id"  type="string" value="$(arg frame_id)"/>
+    <param name="pcldata_type"  type="int" value="$(arg pcldata_type)"/>
+    <param name="publish_type"  type="string" value="$(arg publish_type)"/>
+    <param name="timestamp_type"  type="string" value="$(arg timestamp_type)"/>
+    <param name="data_type"  type="string" value="$(arg data_type)"/>
+    <param name="lidar_correction_file"  type="string" value="$(arg lidar_correction_file)"/>
+    <param name="multicast_ip"  type="string" value="$(arg multicast_ip)"/>
+    <param name="coordinate_correction_flag"  type="bool" value="$(arg coordinate_correction_flag)"/>
+    <param name="fixed_frame"  type="string" value="$(arg fixed_frame)"/>
+    <param name="target_frame"  type="string" value="$(arg target_frame)"/>
+  </node>
+
+  <!-- 주석 처리된 노드들 -->
+  <!--
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(env PWD)/adaptive_clustering.rviz"/>
+  -->
+  <!--
+  <node pkg="ma_rrt_path_plan" type="ERP42_status1.py" name="erp42_status" output="screen">
+  </node>
+  -->
+</launch>

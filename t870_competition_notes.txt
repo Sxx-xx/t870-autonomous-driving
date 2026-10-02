@@ -1,0 +1,333 @@
+===============================================================================
+2026-09-20 대회 당일 요약  (이 블록만 보면 된다)
+===============================================================================
+테스트 226개 통과. --symlink-install 이라 파이썬/런치 수정은 리빌드 불필요.
+
+실행 전
+  conda deactivate
+  ps aux | grep "[w]ebcam_pub_node"     아무것도 안 나와야 한다
+  ls /dev/v4l/by-id/                    c920 과 sonix 둘 다 보여야 한다
+  유령 프로세스가 /dev/video2 를 물면 카메라가 0 Hz 가 된다.
+
+터미널 1 (install_t870 을 source 하지 않는다)
+  source /opt/ros/jazzy/setup.bash
+  ros2 run mavros mavros_node --ros-args \
+    -p fcu_url:=serial:///dev/serial/by-id/usb-Holybro_Pixhawk6C_45002F001451333531373234-if00:115200 \
+    -p system_id:=255 -p component_id:=191 \
+    -p target_system_id:=1 -p target_component_id:=1
+
+터미널 2
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+  source /opt/ros/jazzy/setup.bash && source install_t870/setup.bash
+  ros2 launch t870_control t870_competition.launch.py 2>&1 \
+    | tee /tmp/t870_competition.log
+
+리모콘 AUTO = GPS 모드, MANUAL = STOP. 웹에서 따로 누를 것 없다.
+
+미션 구간 (최종)
+  WP196 감속 -> WP201~227 정적장애물 -> WP232 순항 복귀
+  WP292 감속 -> WP297~335 T주차        (판단 297~299)
+  WP526 감속 -> WP531~588 동적장애물   (완료 시 즉시 복귀)
+  WP627 감속 -> WP632~693 평행주차     (판단 632~634)
+  WP690~695 화살표/X -> WP697 OX_right 전환
+  신호등 정지선 WP147 / WP427
+
+띄우자마자 볼 줄
+  camera_front / camera_laptop : 발행 76 프레임 (15.0 Hz), 읽기실패 0
+  Traffic light camera ready: ... area_ceiling 0.050, roi 0.80, green_pref 0.50
+  Competition mission manager ready: route=T1
+  Startup straight done; locked on to waypoint N
+
+주행 중 로그
+  Traffic light N: holding ... 강제출발까지 NN s   신호등에 잡힘(25초 후 출발)
+  Traffic light N: GO at WPxxx                    통과
+  AVOID 카메라: ahead 2.31 m, offset +0.18 m      정적장애물 검출 중
+  AVOID 카메라: clear, 보정 +0.000 rad            장애물 없음으로 판단
+  AVOID 센서 끊김 ... GPS 경로로 간다             카메라 문제. 차는 계속 간다
+  PARKING DECISION LOCKED: ... detected=True, choice=2
+  동적장애물 감시 종료 WP5xx ...                  동적 완료, 속도 복귀
+
+현장 조정 (노드 재시작 불필요)
+  주황을 못 잡을 때   ros2 param set /obstacle_avoidance_node hsv_low "[5,60,80]"
+                      hue 상한 16 은 건드리지 말 것. 잔디가 들어온다.
+  ROI 를 좁힐 때      ros2 param set /obstacle_avoidance_node roi_corridor_half_m 1.0
+  신호등 진단         /usr/bin/python3 traffic_calib/probe.py
+  ROI 거리 확인       /usr/bin/python3 bev_calib/pick_roi.py
+
+[중요] 2026-09-19~20 변경은 전부 실차 미검증이다.
+  주황 HSV 는 휴대폰 사진으로 맞춘 값이라 C920 에서 어긋날 수 있다.
+  사다리꼴 ROI, 동적 후 속도 복귀, 주차 결정 재발행, 신호등 면적 상한도
+  모두 대회가 첫 주행이다.
+
+상세는 T870_COMPETITION_HANDOFF_2026-09-19.txt 31~38 절.
+
+
+T870 대회 통합 미션 (2026-09-19)
+
+초기 경로
+  gps_recordings/대회용/T_Parking1.csv
+
+속도
+  일반 GPS 구간: 2.2222 m/s (8 km/h)
+  LiDAR 미션: 0.56 m/s (2 km/h)
+  각 LiDAR 미션 5 WP 전부터 선형 감속하고 종료 후 5 WP 동안 선형 가속한다.
+  정적장애물 WP201~227에서는 GPS 조향을 유지하면서 카메라 회피 보정각만
+  더한다. 장애물이 없으면 GPS 조향 그대로, 감지 시 최대 +/-0.12 rad를
+  단계적으로 더하고 최종 조향은 +/-0.20 rad로 제한한다.
+
+WP 동작
+  39       하드웨어 E-stop 3초 후 GPS 재개
+  141~146  첫 신호등 판단(최빈값), 적색우세면 147에서 정지
+           142~146 에서 8->2 km/h 감속 (정지선을 넘지 않게)
+  201~227  정적 장애물 회피, 228부터 GPS tracking 복귀 (순항 복귀 232)
+  [2026-09-20] 두 번째 신호등(262~268)은 뺐다. 이 코스에서 안 쓴다.
+               남은 것은 WP147 과 WP427 뿐이고, 로그 번호는
+               1번=WP147, 2번=WP427 이다(예전 3번이 지금 2번).
+  297~299  T LiDAR 판단(80~100도, 0.05~4.0m, 8점, 5표). WP300에서 확정.
+           감지=T_Parking2 WP299 전환, 미감지=T_Parking1 유지
+  T1 330   P_Parking1 WP335로 전환
+  T2 335   P_Parking1 WP335로 전환
+  421~426  세 번째 신호등 판단(최빈값), 422~426 감속
+  531~588  동적장애물 구간. 정면 +/-30도, 3.0 m, 3점이면 즉시 정지하고
+           3초 뒤 GPS 복귀. 한 번 처리하면 감시를 끈다.
+           (예전 'WP532 무조건 3초 정차' 를 대체함)
+  632~634  평행 LiDAR 판단(-15~+15도, 0.05~5.5m, 8점, 3표). WP635에서 확정.
+  638      평행 분기 실행.
+           감지=P_Parking2 WP638 전환, 미감지=P_Parking1 유지
+  690~695  표지(화살표/X) 판단. 왼쪽부터 빨강,초록이면 true
+  693      true면 OX_right WP697로 전환, false면 현재 경로 유지
+
+판단 입력 토픽 (T/평행은 launch의 LiDAR 선택기가 자동 발행)
+  /competition/t_parking_choice  std_msgs/UInt32 (1 또는 2)
+  /competition/parallel_choice   std_msgs/UInt32 (1 또는 2)
+  /competition/ox_straight       std_msgs/Bool
+
+명시적 후진 구간 (전체 코스 급커브 오판 방지)
+  T_Parking1: WP306~318
+  T_Parking2: WP309~321
+  P_Parking1: WP641~647
+  P_Parking2: WP649~655
+  gps_reverse_cusp_deg=0.0 이므로 45도 자동 첨점 판정은 사용하지 않는다.
+
+실행
+  MAVROS는 별도 터미널에서 시스템 설치본으로 실행한다.
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+  ros2 launch t870_control t870_competition.launch.py
+
+CSV
+  대회용 CSV 5개는 CP949에서 UTF-8로 변환함.
+  원본은 gps_recordings/대회용/.cp949_backup 에 보존함.
+
+정지 웨이포인트 (2026-09-19 수정)
+  대회용 CSV는 QGIS가 필드명을 잘라 target_spe로 내보내므로 target_speed
+  컬럼이 없다. follower가 이를 전 구간 speed=0으로 읽어 1 m마다 1초씩
+  정차하던 문제를 수정했다. load_route가 has_speed를 함께 반환하고,
+  속도 컬럼이 없는 경로에서는 정지 웨이포인트 판정을 끈다.
+  기동 로그에 'target_speed column=no (stop waypoints disabled)'가 찍혀야
+  정상이다.
+
+후진 구간 검증 (2026-09-19)
+  reverse=start:stop 은 '후진으로 지나가는 WP' 집합이고, 기어가 바뀌는
+  자리는 start-1 과 stop 이다.
+  T1 306:318 -> 후진 305 / 전진 318
+  T2 309:321 -> 후진 308 / 전진 321
+  P1 641:647 -> 후진 640 / 전진 647
+  P2 649:655 -> 후진 648 / 전진 655
+  4개 모두 CSV 실측 반전점과 일치함을 확인했다.
+
+WP300/301 삽입점 순서 수정 (2026-09-19)
+  T_Parking2, P_Parking1, P_Parking2, OX_right 4개 파일에서 수동 삽입점이
+  300번이 아니라 301번 자리에 들어가 지그재그가 있었다. 두 행의 순서만
+  맞바꿨다. 행 수가 그대로라 이후 WP 번호는 전부 유효하다.
+  백업: gps_recordings/대회용/.pre_wp300_swap_backup/
+
+LiDAR 판단 방향 (2026-09-19 변경)
+  감지되면 2번 경로로 간다. 이전과 반대다.
+  검사 창이 1번 경로가 들어갈 칸을 보기 때문이다.
+    T주차  감지 -> T_Parking2 WP299 전환 / 미감지 -> T_Parking1 유지
+    평행   감지 -> P_Parking2 WP638 전환 / 미감지 -> P_Parking1 유지
+  선택기 파라미터 choice_when_blocked=2 로 지정한다. 기본값은 1이라
+  단독 주차 launch 는 영향이 없다.
+
+LiDAR 판단 관측 창 (2026-09-19 변경)
+  관측 시작 WP와 판단 WP가 같으면 관측 구간이 한 칸뿐이라, 최근접 색인이
+  한 번만 건너뛰어도 판단이 통째로 누락된다(choice 미발행 -> 기본값 1).
+    T주차  관측 WP297~299, 확정 WP300 진입   votes 5/약 37 scan
+    평행   관측 WP632~634, 확정 WP635 진입   votes 3/약 14 scan
+  평행 구간은 아직 8 km/h라 표본이 가장 적어 votes를 낮게 잡았다.
+
+  로그에 'Parking observation started at waypoint ...' 가 안 찍히면
+  색인 건너뛰기가 일어난 것이다.
+
+동적장애물 (2026-09-19 구현)
+  예전 인수인계의 'WP532 3초 정차' 가 이 미션이었다. 시간 정차를 없애고
+  라이다로 실제 장애물을 보게 바꿨다.
+    competition_mission_manager  timed_estop_wp = -1  (껐다)
+    estop_ranges                 531:588
+  정면 +/-30도(raw 150~210), 3.0 m, 3점 이상이면 정지.
+  정지는 펌웨어 'E' 로 나가 PWM 을 즉시 끊는다. 3초 뒤 GPS 복귀하고
+  그 뒤로는 감시를 끈다(평행주차 구간에서 벽을 잡지 않도록).
+
+  끝 WP 588 은 장애물이 끝내 안 나타날 때를 위한 안전장치다. 나타나면
+  3초 정지 후 스스로 꺼지므로 588 까지 가지 않는다.
+
+정지 토픽 네 종류 (섞지 말 것)
+  /t870/emergency_stop     안전/조종기          -> 펌웨어 E
+  /t870/shift_estop        방향전환             -> 펌웨어 E
+  /t870/mission_estop      동적장애물           -> 펌웨어 E
+  /t870/competition_estop  WP39 오르막 정차     -> 펌웨어 H (밀림 방지 홀드)
+  E 가 H 보다 우선한다.
+
+제동 (2026-09-19 확인)
+  주차에서 전진/후진 전환 때 차가 선 것은 역토크 제동이 아니라 관성이다.
+  follower 는 전환 시 0 을 보내고 shift E-stop 을 걸며, 펌웨어 AUTO_BRAKE 는
+  '0 이 아닌 반대 부호 목표' 에서만 걸리므로 발동하지 않는다.
+  2 km/h 에서는 PWM 만 끊어도 짧게 선다는 실측이다. 8 km/h 와 경사는 별개다.
+
+속도 (2026-09-19 전면 개편)
+  라이다가 켜지는 WP 에서는 이미 2 km/h 여야 한다. 그 5 WP 전부터 줄인다.
+    미션          라이다 ON   감속 시작   미션 끝
+    정적장애물        201        196       227
+    T주차            297        292       335
+    동적장애물        531        526       588
+    평행주차         632        627       693
+  신호등 정지선도 5 WP 전부터 줄인다(142~146, 263~267, 422~426).
+  이 값들은 competition_mission_manager_node 의 LIDAR_MISSIONS /
+  TRAFFIC_LIGHTS 표 한 곳에 있다. launch 와 어긋나면 테스트가 실패한다.
+
+신호등 (2026-09-19 수정)
+  구독 토픽이 /vision/traffic_light 였는데 그것을 발행하는 노드가 대회
+  launch 에 없었다. traffic_green 이 영원히 false 라 WP147 에서 서서
+  영영 못 나가는 상태였다. lane_camera_preview 가 실제로 발행하는
+  /vision/traffic_light_state 로 맞췄다.
+  판정은 판단 구간 최빈값이다. UNKNOWN 은 표를 주지 않는다.
+  적색 우세로 섰어도 실시간으로 초록이 되면 출발한다.
+
+마지막 표지 화살표/X (2026-09-19 구현)
+  신호등 로직을 쓸 수 없다. 원형 램프가 아니라 화살표와 X 이고, LED 라
+  카메라 주파수와 안 맞아 획이 끊겨 보인다. 모양을 아예 안 보고 색깔별
+  가장 큰 덩어리의 좌우 순서만 본다.
+  관측 WP690~695, 구간 전체 누적 최빈값, 동률이면 false.
+  lane_camera_preview 가 카메라를 독점하므로 그 노드가 /camera/image_raw
+  로 원본을 내보내게 했다(lane_publish_camera_image:=true).
+
+정적장애물 각도 (2026-09-19 수정)
+  scan_points 는 raw 각도를 쓰는데 보정이 없어 차량 뒤쪽을 보고 있었고
+  좌우도 반대였다. forward_angle_deg(180)로 변환해서 넘기도록 고쳤다.
+  scan_points 를 쓰는 노드는 raw 기준, vehicle_angle_deg 를 쓰는 노드는
+  차량 기준이다. 섞지 말 것.
+
+카메라 2대 (2026-09-19)
+  C920(외장)   /camera/front/image_raw   정적장애물
+  노트북 내장   /camera/laptop/image_raw  신호등, X/화살표
+  lane_camera_preview 는 껐다(enable_lane_preview=false). 차선 인식은
+  GPS 모드 구동에 안 쓰이고 신호등을 떼어내 할 일이 없다.
+  장치는 이름(device_name)으로 잡는다. /dev/video 번호는 바뀐다.
+
+  [함정] cv2.VideoCapture 에 문자열 경로만 주면 GStreamer 로 열려 C920 이
+  안 열린다. cv2.CAP_V4L2 와 MJPG 를 명시해야 한다.
+  [함정] conda (base) 가 켜져 있으면 ROS 가 Python 3.13 을 잡아 rclpy
+  임포트가 실패한다. conda deactivate 먼저.
+
+정적장애물 카메라 판단 (2026-09-19)
+  연석 높이라 라이다 수평면이 위로 지나간다. 카메라 + 지면 호모그래피로
+  실거리를 재서 판단한다. 덩어리 아랫변(접지점)만 변환한다.
+  캘리브레이션 잔차 전방 1.8 cm / 좌우 1.0 cm.
+  카메라가 차량 중심에서 왼쪽 약 0.2 m 치우쳐 있으나 호모그래피가 보정한다.
+  카메라를 옮기면 bev_calib/grab.py 부터 다시 한다.
+
+WP39 오르막 (2026-09-19 실차 성공)
+  경사 10%. 정차 3초 뒤 10 km/h 를 3초 허용해서 탈출한다.
+  follower 자체 상한도 2.7777 로 올려야 한다. 안 그러면 8 km/h 에서 잘린다.
+
+라이다 각도 (2026-09-19 확정)
+  raw 180 도 = 차량 정면.
+
+대회용 CSV 재내보내기 (2026-09-19)
+  파일명에서 언더바가 빠졌다. T_Parking1 / T_Parking2 / P_Parking1 /
+  P_Parking2 / OX_right. 점 수는 그대로라 WP 설정은 전부 유효하다.
+
+  [매번 확인] QGIS 재내보내기 때마다 두 가지가 되살아난다.
+    1) 인코딩이 CP949 로 돌아온다 -> follower 가 UnicodeDecodeError 로 죽는다
+    2) WP300/301 삽입점 순서가 되돌아온다 -> T2 진입 직후 2 m 가 지그재그
+  인수인계 30번에 확인/수정 절차가 있다.
+
+신호등 정지 문제 (2026-09-19 실차)
+  적색 정지는 됐는데 초록으로 바뀌어도 안 나갔다. 수동으로 넘긴 뒤
+  한참 가서 또 멈췄다.
+    원인1: 정지 구간에 상한이 없어 정지선을 지난 뒤에도 계속 걸렸다
+           -> 정지선 +5 WP 넘으면 닫는다 (실차 확인됨)
+    원인2: 서 있으면 WP 가 안 올라가 위 상한이 안 걸린다
+           -> 25초 넘게 서 있으면 강제 출발 (traffic_max_hold_sec)
+    원인3: 초록을 한 번도 못 잡았다
+           -> 초록 채도 하한 90->55 로 완화. 근본 원인은 미해결
+  FORCED GO 가 로그에 찍히면 초록 검출 실패다. 그냥 두면 안 된다.
+
+주황 장애물 vs 마른 잔디 (2026-09-19 실측으로 재확정)
+  [정정] 앞서 '채도로 가른다' 고 적었던 것은 틀렸다. 실차 사진
+  (photo/IMG_8848~8858) 픽셀을 직접 재니 분리자는 hue 였다.
+    햇빛 받은 차체  H 중앙 10   S 중앙 158
+    마른 잔디       H 중앙 25   S 중앙  76
+  채도로 가르면(S>=150) 햇빛에 바랜 차체까지 빠져 '그늘진 실내' 만 남는다.
+    H 5~16, S>=80   -> 차체 73.0%, 잔디 0.10%
+    H 5~22, S>=150  -> 차체 43.8%, 잔디 0.00%   (옛 설정)
+  hsv_low [5,80,80], hsv_high [16,255,255]. hue 상한 16 이 핵심이다.
+  놓칠 때는 채도 하한을 먼저 내린다. hue 상한은 건드리지 말 것.
+    ros2 param set /obstacle_avoidance_node hsv_low "[5,60,80]"
+
+정적장애물 회피 파라미터 (2026-09-20 실측 크기로 재계산)
+  장애물 가로 1.26 m, 폭 0.73 m, 높이 0.28 m / 차폭 0.8 m
+
+  장애물 1.26 x 0.73 m / 차폭 0.8 m / 차선 4.2 m. 장애물은 비스듬히 놓인다.
+
+  [중대] offset 은 장애물 '중심' 이다. 옛 0.55 로는 중심을 비켜도
+  가장자리가 진로에 남아 회피해도 부딪혔다.
+  [중요] 비스듬히 놓이면 더 넓게 막는다. 횡방향 최대 투영은 대각선
+  1.456 m 다(정면 1.26 보다 넓다). 이걸 설계값으로 쓴다.
+
+    desired_clearance_m 0.55 -> 1.41   장애물까지 0.28, 차선까지 0.29
+    look_distance_m     4.0  -> 5.5    5.0 이면 0.127 rad, 상한 0.12 초과
+    roi_y_min           0.55 -> 0.49   = 지면 5.49 m. look 과 같이 움직인다
+    roi_corridor_half_m 1.5  -> 2.2    통로 끝 장애물 가장자리 2.14 m
+
+  차선 4.2 m 에서 갈 수 있는 폭이 0.57 m 뿐이다. clearance 를 키우기만
+  하면 반대쪽으로 나간다(1.75 부터 차선 이탈). 상세는 핸드오프 39 절.
+
+정적장애물 카메라 ROI (2026-09-19)
+  옛 0.35 는 지면 22 m, 그 위는 지평선 너머라 거리가 음수로 나왔다.
+    /usr/bin/python3 bev_calib/pick_roi.py       거리 눈금 사진과 표
+  미션 구간 WP201~227. 시작은 200 에서 한 칸 미뤘고(풀밭을 정면으로 봄),
+  끝은 234 에서 당겼다(구간 종료 시 mux 가 GPS 로 갈아탈 때 남은 보정각
+  이 튄다). 감속 시작 WP196, 순항 복귀 WP232.
+
+정적장애물 센서 끊김 (2026-09-19)
+  카메라가 끊겨도 서지 않고 GPS 경로로 간다. 예전에는 속도 0 을 내서
+  0.5 초 끊김에 주행이 끝났다. GPS 명령 유실만 정지.
+
+동적장애물 후 복귀 (2026-09-19)
+  emergency_stop_node 가 /t870/dynamic_obstacle_done 을 발행하고, 미션
+  매니저가 그 WP 부터 5 WP 에 걸쳐 순항속도로 올린다. 예전에는 감시가
+  끝났는데도 WP588 까지 2 km/h 로 기어가 약 95 초를 흘렸다.
+
+주차 결정 재발행 (2026-09-19)
+  parking_slot_selector 가 결정을 한 번만 쏘고 있었다. 놓치면 미션
+  매니저가 기본값 choice=1 을 써서 주차 경로가 통째로 틀린다.
+  0.2 초마다 재발행한다. 경로(path_pub)는 재발행하지 않는다 - follower 가
+  최근접 색인을 다시 잡는다.
+
+카메라 함정 (2026-09-19)
+  device_name 부분 일치 주의. 'webcam' 은 C920 이름에도 들어 있어 노트북
+  카메라가 C920 을 잡으려 했다. 노트북은 'sonix' 로 지정한다.
+
+  이전 launch 가 남아 카메라를 물고 있으면 새 launch 가 조용히 0 Hz 가
+  된다. 에러가 안 난다. 다시 띄우기 전에 확인한다.
+    pkill -f install_t870 ; sleep 3
+    fuser /dev/video2 /dev/video0 || echo "비어있음"
+
+  기동 로그에 cv2 출처와 5초마다 발행 현황이 찍힌다.
+    발행 76 프레임 (15.0 Hz), 읽기실패 0     <- 정상
+
+Pixhawk USB (2026-09-19)
+  허브 포트에서 error -71 로 열거 실패. 노트북 직결로 해결됐다.
+  lsusb 에 Holybro 가 없으면 포트/케이블을 바꾼다.

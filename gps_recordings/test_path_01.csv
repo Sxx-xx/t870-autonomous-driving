@@ -1,0 +1,2 @@
+index,ros_time_sec,latitude,longitude,altitude_m,utm_easting_m,utm_northing_m,utm_zone,fix_status,covariance_x_m2,covariance_y_m2,target_speed
+0,1789051361.911504269,35.0750825000,129.0868496667,7.700,507917.9308,3881372.9285,52N,0,1.5500,1.5500,0.400

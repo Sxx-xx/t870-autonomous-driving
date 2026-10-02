@@ -1,0 +1,11 @@
+<launch>
+    <!-- ERP42_status 노드 실행 -->
+    <node name="erp_status" pkg="erp42_control_ob" type="ERP42_status.py" output="screen">
+        <param name="baudrate" value="115200" type="int" />
+    </node>
+
+    <!-- erp42_planner_main 노드 실행 -->
+    <node name="erp_planner" pkg="erp42_control_ob" type="erp42_planner_main.py" output="screen">
+    </node>
+</launch>
+

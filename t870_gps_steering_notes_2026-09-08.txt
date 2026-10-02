@@ -1,0 +1,241 @@
+T870 GPS 경로추종 및 조향 점검 메모
+작성일: 2026-09-08
+
+===============================================================================
+1. GPS 경로 파일
+===============================================================================
+
+파일:
+  /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/gps_recordings/tlqkfehoTek.csv
+
+확인 결과:
+  - 전체 723줄(헤더 1줄 + 경로점 722개)
+  - 열: begin,end,distance,angle
+  - distance: 0~721m
+  - 절대 GPS 좌표가 아닌 상대경로 형식
+  - angle은 북쪽 0도, 시계방향 방위각으로 처리
+  - 첫 유효 GPS 위치를 상대경로의 시작점으로 사용
+  - 정지 상태에서 헤딩 센서가 없으면 경로 접선 방향을 초기 헤딩으로 사용
+
+수정된 코드:
+  src/t870_control/t870_control/gps_path_follower_node.py
+
+설치 및 빌드 확인:
+  - distance/angle 상대경로 로딩 기능 적용
+  - allow_route_heading_at_start 기능 적용
+  - t870_control 빌드 성공
+
+===============================================================================
+2. ROS 통신 환경
+===============================================================================
+
+사용했던 검증 환경:
+
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+주의:
+  install_t870에 포함된 MAVROS는 현재 ROS Jazzy 라이브러리와 ABI가 맞지 않아
+  exit code 127 및 undefined symbol 오류가 발생한다.
+
+오류 바이너리:
+  install_t870/mavros/lib/mavros/mavros_node
+
+MAVROS는 반드시 시스템 바이너리를 사용한다:
+  /opt/ros/jazzy/lib/mavros/mavros_node
+
+MAVROS 터미널에서는 install_t870/setup.bash를 source하지 않는다.
+
+===============================================================================
+3. 전체 구동 명령
+===============================================================================
+
+[터미널 1: MAVROS]
+
+  source /opt/ros/jazzy/setup.bash
+
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export ROS_LOG_DIR=/tmp/ros_mavros_logs
+
+  /opt/ros/jazzy/lib/mavros/mavros_node \
+    --ros-args \
+    -r __ns:=/mavros \
+    --params-file /opt/ros/jazzy/share/mavros/launch/apm_pluginlists.yaml \
+    --params-file /opt/ros/jazzy/share/mavros/launch/apm_config.yaml \
+    -p fcu_url:=/dev/ttyACM2:921600 \
+    -p system_id:=255 \
+    -p component_id:=191 \
+    -p target_system_id:=1 \
+    -p target_component_id:=1
+
+2026-09-08 시험 당시 사용 포트:
+  /dev/ttyACM2:921600
+
+실제 실행 전 확인:
+  ls -l /dev/ttyACM* /dev/serial/by-id/
+
+[터미널 2: 전체 GPS 경로추종]
+
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export ROS_LOG_DIR=/tmp/ros_t870_logs
+
+  ros2 launch t870_control t870_lane_autonomy.launch.py \
+    lidar_serial_port:=/dev/ttyUSB0 \
+    record_gps_path:=false \
+    enable_localization:=true \
+    enable_gps_follower:=true \
+    gps_follow_path_file:=/home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/gps_recordings/tlqkfehoTek.csv \
+    gps_follow_speed_mps:=0.55 \
+    wheelbase_m:=1.0
+
+휴대폰 제어:
+  주소: http://10.72.183.176:8080
+  PIN: 8700
+  GPS PATH 버튼을 눌러야 주행을 시작한다.
+
+IP는 네트워크 재연결 시 바뀔 수 있으므로 확인:
+  ip -brief address show
+
+===============================================================================
+4. 구동 상태 확인 명령
+===============================================================================
+
+  ros2 topic echo /mavros/state --once
+  ros2 topic echo /gps/fix --once
+  ros2 topic echo /cmd_vel
+  ros2 topic echo /cmd_vel/gps
+  ros2 topic echo /t870/steering_angle
+  ros2 topic echo /mavros/rc/override
+  ros2 topic echo /mavros/rc/out
+  ros2 topic echo /t870/emergency_stop
+  ros2 topic echo /t870/arduino_drive_command_kmh
+  ros2 topic echo /wheel/speed_mps
+
+정상 조건:
+  - /mavros/state: connected=true
+  - /t870/emergency_stop: false
+  - /cmd_vel/gps linear.x: 약 0.55m/s
+  - /mavros/rc/override CH1: 조향에 따라 약 1000~2000
+  - /mavros/rc/out channels[8]: SERVO9 출력, 약 1000~2000
+
+===============================================================================
+5. 조향 신호 확인 결과
+===============================================================================
+
+확인 완료:
+  - 휴대폰 조향에 따라 /cmd_vel angular.z 값 변화
+  - /t870/steering_angle 값 변화
+  - /mavros/rc/override CH1 값 변화
+  - MAVROS connected=true
+  - /mavros/rc/out의 9번째 값(channels[8], SERVO9)이 약 1000~1900으로 변화
+  - Pixhawk PWM이 Arduino D8까지 도착
+
+Arduino 시리얼에서 확인한 값:
+  Steer center = 485
+  Soft limit   = 55 ~ 969
+  Max speed    = 2.0 km/h
+  POT:506 | SteerPWM:1496 | SteerTarget:480
+
+신호 흐름:
+  휴대폰
+    -> /cmd_vel.angular.z
+    -> /t870/steering_angle
+    -> /mavros/rc/override CH1
+    -> Pixhawk SERVO9
+    -> AUX OUT 1
+    -> Arduino D8
+    -> Arduino D7/D9
+    -> 조향 모터드라이버
+    -> 조향 모터
+
+배선:
+  Pixhawk AUX OUT 1 Signal -> Arduino D8
+  Pixhawk AUX OUT GND      -> Arduino GND
+  Arduino D7               -> 조향 드라이버 방향 입력
+  Arduino D9               -> 조향 드라이버 PWM 입력
+  Arduino GND              -> 조향 드라이버 GND
+
+===============================================================================
+6. 조향이 안 됐던 원인
+===============================================================================
+
+가장 가능성 높은 원인:
+  Arduino의 STEER-STALL 보호 래치
+
+당시 값:
+  실제 POT    = 506
+  조향 목표   = 480
+  오차        = 26
+  Deadband    = 15
+  Stall 시간  = 500ms
+
+중립에서도 오차 26이 deadband 15보다 커서 Arduino가 약한 출력으로 중앙 이동을
+시도한다. 정지마찰 때문에 POT 값이 500ms 동안 5 이상 변하지 않으면
+STEER-STALL이 래치되고 이후 조향 출력이 차단될 수 있다.
+
+시리얼에 아래 명령을 입력한 뒤 조향이 다시 정상 작동함:
+  r
+
+출력:
+  LATCH CLEARED
+
+따라서 간헐적으로 조향이 안 된 현상은 중앙값 오차와 민감한 stall 판정 때문에
+STEER-STALL이 걸린 것으로 판단한다.
+
+===============================================================================
+7. Arduino 조향 점검 명령
+===============================================================================
+
+주의:
+  시리얼 모니터를 열면 ROS arduino_drive_node가 같은 포트를 열 수 없다.
+  점검 후 Ctrl+]로 반드시 종료한다.
+
+시리얼 모니터:
+
+  python3 -m serial.tools.miniterm \
+    /dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_34331323136351211280-if00 \
+    115200
+
+래치 해제:
+  r
+
+바퀴를 띄운 상태에서 Arduino->드라이버 조향 시험:
+  s60
+  s0
+  s-60
+  s0
+
+판단:
+  - SteerPWM이 LOST이면 Pixhawk AUX OUT 1 신호/GND 문제
+  - SteerPWM과 SteerTarget은 변하지만 POT가 그대로이면 Arduino 출력단,
+    D7/D9, 드라이버 GND, 모터 구동 또는 stall 문제
+  - STEER-FAULT이면 A0 포텐셔미터/배선 문제
+  - STEER-STALL이면 원인을 제거한 뒤 r로 래치 해제
+
+===============================================================================
+8. 재발 방지 권장사항
+===============================================================================
+
+1) 바퀴를 실제 정중앙에 놓고 POT 값을 여러 번 측정한다.
+2) 실제 중앙값이 계속 506 근처이면 POT_AT_CENTER 재보정을 검토한다.
+3) STEER_DEADBAND를 현재 15에서 약 30으로 확대하는 것을 검토한다.
+4) STEER_STALL_MS를 현재 500ms보다 조금 늘리는 것을 검토한다.
+5) STEER_MIN_PWM이 실제 정지마찰을 이길 수 있는지 s 명령으로 측정한다.
+6) AUX OUT 1 Signal/GND, Arduino D7/D9 및 공통 GND 커넥터를 고정한다.
+7) Pixhawk 반복 경고음이 나면 QGroundControl Messages와 전원/USB 재부팅 여부를
+   확인한다.
+
+현재 상태:
+  - r 명령으로 LATCH CLEARED 후 조향이 정상 작동함
+  - 코드를 바꾸기 전 실제 중앙 POT 값을 반복 측정하는 것이 필요함
+  - 실차 시험은 바퀴 주변을 비우고 저속부터 수행할 것

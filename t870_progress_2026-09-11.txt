@@ -1,0 +1,119 @@
+T870 작업 진행 메모
+작성일: 2026-09-11
+
+===============================================================================
+1. 오늘 최종 상태
+===============================================================================
+
+- Pixhawk MAVROS heartbeat 연결 확인 완료
+- 휴대폰 웹 제어 연결 및 MANUAL 조향/스로틀 동작 확인 완료
+- Arduino 수정 스케치 업로드 완료
+- 전체 구동 정상 작동 확인 완료
+- 휴대폰 웹 제어 PIN: 8700
+- IP는 네트워크 재연결 시 바뀌므로 `ip -brief address show`로 확인
+
+===============================================================================
+2. 오늘 적용한 코드 변경
+===============================================================================
+
+Arduino:
+  sketch_aug/sketch_aug.ino
+
+- 반복되던 중앙 부근 STEER-STALL 오검출을 막기 위해 stall 감지 비활성화
+  const bool ENABLE_STEER_STALL = false;
+- 최대속도 제한을 10 km/h로 변경
+  const float MAX_SPEED_KMH = 10.0;
+- POT 센서 fault, 조향 소프트 리밋, Pixhawk PWM 단절 정지는 계속 유지
+
+ROS launch:
+  src/t870_control/launch/t870_indoor_lidar.launch.py
+  src/t870_control/launch/t870_lane_autonomy.launch.py
+
+- MANUAL 최대속도: 2.78 m/s (약 10 km/h)
+- Arduino bridge 최대속도: 10.0 km/h
+- GPS PATH 기본 목표속도: 2.78 m/s (약 10 km/h)
+- RRT 장애물 회피 속도는 기존 0.25 m/s 유지
+- t870_control ROS 패키지 재빌드 완료
+
+주의:
+- 기존 PI/피드포워드는 약 2 km/h 저속 시험 기준으로 설정되어 있다.
+- 10 km/h 실차에서는 속도 응답, 제동거리, E-stop 거리 재튜닝이 필요하다.
+- STEER-STALL을 껐으므로 실제 기계적 걸림 발생 시 자동 stall 차단은 작동하지 않는다.
+
+===============================================================================
+3. MAVROS ABI 충돌과 실행 방법
+===============================================================================
+
+문제:
+  시스템 mavros_node를 실행해도 터미널 환경에 install_t870가 남아 있으면
+  install_t870/mavros/lib/libmavros.so가 로드되어 undefined symbol 오류가 발생했다.
+
+MAVROS 터미널에서는 overlay 환경을 제거하고 시스템 ROS만 사용한다.
+
+  unset AMENT_PREFIX_PATH
+  unset CMAKE_PREFIX_PATH
+  unset COLCON_PREFIX_PATH
+  unset LD_LIBRARY_PATH
+  unset PYTHONPATH
+
+  source /opt/ros/jazzy/setup.bash
+
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export ROS_LOG_DIR=/tmp/ros_mavros_logs
+
+  /opt/ros/jazzy/lib/mavros/mavros_node \
+    --ros-args \
+    -r __ns:=/mavros \
+    --params-file /opt/ros/jazzy/share/mavros/launch/apm_pluginlists.yaml \
+    --params-file /opt/ros/jazzy/share/mavros/launch/apm_config.yaml \
+    -p fcu_url:=/dev/serial/by-id/usb-Holybro_Pixhawk6C_45002F001451333531373234-if00:921600 \
+    -p system_id:=255 \
+    -p component_id:=191 \
+    -p target_system_id:=1 \
+    -p target_component_id:=1
+
+`Got HEARTBEAT`을 확인하고 MAVROS 터미널을 계속 유지한다.
+
+===============================================================================
+4. 전체 구동 명령
+===============================================================================
+
+MAVROS가 실행 중인 상태에서 별도 터미널에서 실행한다.
+
+  cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws
+
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+
+  export ROS_DOMAIN_ID=0
+  export ROS_LOCALHOST_ONLY=1
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export ROS_LOG_DIR=/tmp/ros_t870_logs
+
+  ros2 launch t870_control t870_lane_autonomy.launch.py \
+    lidar_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_dc29dffaaa31f111b5fb935f30d20014-if00-port0 \
+    arduino_serial_port:=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_34331323136351211280-if00 \
+    record_gps_path:=false \
+    enable_localization:=true \
+    enable_gps_follower:=true \
+    gps_follow_path_file:=/home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws/gps_recordings/tlqkfehoTek.csv \
+    gps_follow_speed_mps:=2.78 \
+    wheelbase_m:=1.0
+
+===============================================================================
+5. 장치 및 운용 주의사항
+===============================================================================
+
+고정 by-id 장치:
+- Pixhawk MAVLink: usb-Holybro_Pixhawk6C_45002F001451333531373234-if00
+- Arduino: usb-Arduino__www.arduino.cc__0043_34331323136351211280-if00
+- LiDAR: usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_dc29dffaaa31f111b5fb935f30d20014-if00-port0
+
+- Arduino IDE Serial Monitor 또는 miniterm을 켜 둔 상태에서는 ROS Arduino 노드가
+  `Device or resource busy`로 포트를 열지 못한다.
+- Arduino 업로드/점검 후 Serial Monitor와 Arduino IDE의 포트 연결을 닫고 구동한다.
+- MANUAL 버튼을 누르면 스로틀 값이 0으로 초기화되므로 스로틀을 다시 움직여야 한다.
+- USB 장치가 사라지면 `/dev/serial/by-id/`와 케이블/허브 전원을 먼저 확인한다.
+- 실차 10 km/h 시험 전 넓은 통제 공간, 즉시 STOP 수단, 제동거리 확보가 필요하다.

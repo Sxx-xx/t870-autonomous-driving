@@ -1,0 +1,208 @@
+===============================================================================
+T870 신호등 빨간색 감지 메모
+===============================================================================
+
+[2026-09-20 주의] 이 문서는 traffic_red_detector 노드 이야기다. 대회
+통합 launch(t870_competition.launch.py)는 이 노드를 띄우지 않는다.
+
+  대회 경로의 신호등 판정은 아래가 맡는다.
+    노트북 카메라 -> traffic_light_camera 노드 -> /vision/traffic_light_state
+    판정 함수      -> t870_control/traffic_lamp.py 의 detect_traffic_light
+    적/황/녹 3색을 모두 판정한다 ("초록은 판정 대상이 아니다" 는 옛말)
+
+  파라미터와 실차에서 겪은 문제는 아래를 볼 것.
+    T870_COMPETITION_HANDOFF_2026-09-19.txt 31 절 (정지선에서 못 나오던 문제)
+    핵심: 면적 상한 0.004 가 사실상 '최소 동작 거리 4.5 m' 였다. 정지선에
+    서면 램프가 커서 탈락해 UNKNOWN 이 되고 초록을 영영 못 봤다.
+    현재 area_ceiling_ratio 0.05, roi_height_ratio 0.8, green_preference 0.5
+
+  진단 도구: /usr/bin/python3 traffic_calib/probe.py
+
+아래는 traffic_red_detector 의 기록으로 그대로 둔다.
+
+1. 목적
+-------------------------------------------------------------------------------
+- 교차로에서 빨간 신호등만 감지한다.
+- 빨간색이 아니면 정지 명령을 만들지 않고 기존 경로를 그대로 통과한다.
+- 초록색과 노란색은 현재 판정 대상이 아니다.
+- 신호등 감지 코드는 주차 코드와 분리되어 있다.
+
+2. 현재 코드
+-------------------------------------------------------------------------------
+빨간 신호등 감지 파일:
+  src/t870_control/t870_control/traffic_red_detector_node.py
+
+실행 파일:
+  traffic_red_detector
+
+입력:
+  /camera/image_raw  (sensor_msgs/Image)
+
+출력:
+  /vision/traffic_stop   (std_msgs/Bool)
+  /vision/traffic_light  (std_msgs/String: RED 또는 PASS)
+  /vision/traffic_debug  (sensor_msgs/Image)
+
+현재 기본 판정 영역:
+  영상 상단 2%~68%, 가로 8%~92%
+
+마지막 XO/완주 빨간 표식 감지 파일:
+  src/t870_control/t870_control/finish_red_detector_node.py
+
+실행 파일:
+  finish_red_detector
+
+입력:
+  /camera/image_raw  (sensor_msgs/Image)
+
+출력:
+  /vision/xo_detected  (std_msgs/Bool)
+  /vision/xo_state     (std_msgs/String: XO_RED 또는 SEARCH)
+  /vision/xo_debug     (sensor_msgs/Image)
+
+현재 기본 판정 영역:
+  영상 상단 0%~48%, 가로 20%~80%
+
+정지/통과 저속 시험 파일:
+  src/t870_control/t870_control/traffic_speed_test_node.py
+
+실행 파일:
+  traffic_speed_test
+
+동작:
+  /vision/traffic_stop=false 이고 감지 신호가 최근 0.7초 안에 들어오면
+  /cmd_vel/mission_auto 로 1 km/h, 조향 0 명령을 낸다.
+  RED 또는 감지 timeout이면 Twist 0으로 정지한다.
+
+3. 판정 전처리
+-------------------------------------------------------------------------------
+- BGR 영상을 HSV로 변환한다.
+- HSV 빨강 범위 두 구간을 사용한다.
+    H 0~12, H 168~180
+- RGB에서 R-G, R-B 차이를 함께 검사한다.
+- 채도와 V 밝기 하한을 검사한다.
+- 빨간 영역을 morphology open/close로 정리한다.
+- 연결 성분별 면적을 검사한다.
+- 후보의 평균 채도, 평균 밝기, 평균 R-G 우세도를 검사한다.
+- 후보가 주변보다 밝은지 local V contrast를 검사한다.
+- 후보가 너무 크거나 사각형이면 제외한다.
+- 원형도 0.42 이상인 후보만 신호등 램프 후보로 인정한다.
+- 8프레임 중 5프레임 이상 감지되어야 RED로 확정한다.
+- 빨간색이 8프레임 연속 사라지면 PASS로 해제한다.
+
+4. 실행 방법
+-------------------------------------------------------------------------------
+카메라:
+  ros2 run t870_control webcam_pub_node --ros-args \
+    -p device_index:=2 -p width:=1280 -p height:=720 \
+    -p fps:=15.0 -p show_window:=true
+
+신호등 감지:
+  ros2 run t870_control traffic_red_detector
+
+저속 시험:
+  ros2 run t870_control traffic_speed_test
+
+확인:
+  ros2 topic echo /vision/traffic_light
+  ros2 topic echo /vision/traffic_stop
+  ros2 topic echo /cmd_vel/mission_auto
+
+디버그 영상:
+  ros2 run rqt_image_view rqt_image_view
+  선택 토픽: /vision/traffic_debug
+
+카메라 장치:
+  Logitech C920 = /dev/video2
+  노트북 카메라 = /dev/video0
+
+5. 오검출 조정
+-------------------------------------------------------------------------------
+휴대폰 화면이나 빨간 외장부를 계속 감지하면:
+
+  ros2 run t870_control traffic_red_detector --ros-args \
+    -p min_red_area_ratio:=0.00025 \
+    -p min_mean_saturation:=130.0 \
+    -p min_mean_red_excess:=60.0 \
+    -p min_mean_value:=150.0 \
+    -p min_local_value_contrast:=25.0 \
+    -p min_circularity:=0.50
+
+값을 높이면 오검출은 줄지만 멀리 있는 실제 빨간불을 놓칠 수 있다.
+실제 교차로 영상으로 조정해야 한다.
+
+6. 1 km/h 신호등 시험 메모
+-------------------------------------------------------------------------------
+- traffic_speed_test는 차량 최종 토픽에 직접 쓰지 않고 AUTO mission source인
+  /cmd_vel/mission_auto에만 Twist를 발행한다.
+- 기본값은 PASS=1 km/h, RED=정지, publish_rate=20 Hz.
+- detection_timeout_sec=0.7 이라서 카메라/감지 노드가 멈추면 자동 정지한다.
+- require_pass_label=false 기본값에서는 /vision/traffic_stop=false 만으로 통과한다.
+  더 엄격히 보려면 require_pass_label=true 로 켜서 /vision/traffic_light가 PASS일
+  때만 움직이게 할 수 있다.
+- 조향은 항상 0으로 둔다. 신호등 감지 로직만 정지/통과 시험하려는 용도다.
+
+AUTO 동작 흐름:
+- 차량이 AUTO 입력을 받아들이는 상태에서 traffic_speed_test를 켜면,
+  신호등 감지 결과가 /cmd_vel/mission_auto 속도 명령으로 반영된다.
+- 빨간불 감지 확정:
+  traffic_red_detector가 /vision/traffic_stop=true, /vision/traffic_light=RED를
+  발행하면 차량은 E-stop처럼 확실하게 브레이크해야 한다.
+  단순히 목표 속도 0을 천천히 주는 수준이 아니라, 빨간불 정지 요구가 들어온
+  동안에는 주행 명령을 차단하고 강한 제동/정지 상태를 유지해야 한다.
+- 빨간불 해제 또는 빨간색 미검출:
+  /vision/traffic_stop=false 상태가 최근 detection_timeout_sec 안에 유지되면
+  PASS 판정으로 보고 재출발한다.
+- 즉, AUTO 상태에서는 감지 -> E-stop급 제동 정지 -> PASS 확인 -> 재출발
+  순서가 요구사항이다.
+- 현재 traffic_speed_test는 시험용으로 Twist 0을 발행하는 단계다.
+  실제 차량에서 빨간불을 E-stop처럼 확실하게 세우려면 mission_manager,
+  remote_mode_control 또는 별도 stop mux에서 traffic_stop=true를 최우선 정지
+  조건으로 처리해야 한다.
+- 실제 주행 미션에서는 waypoint 조건도 함께 확인해야 한다. 신호등 구간 밖에서는
+  빨간색 오검출이 전체 주행을 막지 않도록 활성 구간을 제한한다.
+
+실행 예:
+  ros2 run t870_control traffic_speed_test --ros-args \
+    -p speed_kph:=1.0 \
+    -p detection_timeout_sec:=0.7 \
+    -p require_pass_label:=true
+
+7. 영상이 잘리는 문제
+-------------------------------------------------------------------------------
+- FPS는 시간 해상도와 감지 지연에 영향을 주지만 영상이 잘리는 주원인은 아니다.
+- 주로 카메라 해상도, 가로세로 비율, V4L2 캡처 포맷 문제다.
+- 현재 감지 노드는 원본 프레임을 자르지 않고, 판정에만 ROI를 적용한다.
+- /vision/traffic_debug는 전체 프레임 위에 ROI와 후보를 표시한다.
+
+8. 현재 완료된 것
+-------------------------------------------------------------------------------
+- traffic_red_detector_node.py:
+  빨간 신호등만 temporal confirmation으로 확정하고 RED/PASS 및 stop Bool 발행.
+- finish_red_detector_node.py:
+  마지막 구간용 상단 중앙 빨간 표식을 별도 토픽으로 감지. 기본은 latch_detection=true.
+- traffic_speed_test_node.py:
+  감지 결과를 이용해 PASS 시 1 km/h 직진, RED/timeout 시 정지하는 정적 조향 시험
+  노드 추가.
+- setup.py entry point:
+  traffic_red_detector, finish_red_detector, traffic_speed_test 등록 완료.
+- 주차 쪽과 분리:
+  신호등 감지는 주차 제어 코드와 분리되어 있고, 주차 런치에서는 mission stack /
+  camera stop 쪽을 비활성화하는 방향으로 정리됨.
+
+9. 향후 미션 통합 계획
+-------------------------------------------------------------------------------
+현재 신호등 노드는 감지만 하고 차량 속도 명령을 직접 발행하지 않는다.
+향후 별도 mission_manager를 만들어 waypoint 구간별로 미션을 활성화한다.
+
+예:
+  WP 0~N       GPS path follower
+  신호등 WP    traffic_red_detector 활성화
+  주차 WP 7   t_path_selector stage1 활성화
+  주차 WP 27  t_path_selector stage2 활성화
+  마지막 구간 XO WP  finish_red_detector 활성화
+
+미션 매니저는 현재 waypoint와 route/path 이름을 기준으로 활성 미션을 하나만
+선택하고, 비활성 미션의 정지/경로 변경 출력이 주행을 방해하지 않도록 해야 한다.
+신호등 감지 토픽은 /vision/traffic_stop 하나로 통일하고, 실제 정지 명령은
+mission_manager 또는 remote_mode_control에서 waypoint 조건을 확인한 뒤 적용한다.

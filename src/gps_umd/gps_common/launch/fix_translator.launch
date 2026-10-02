@@ -1,0 +1,8 @@
+<launch>
+
+  <node name="utm_odometry_node" pkg="gps_common" type="utm_odometry_node">  
+	<remap from="/navsat_fix_in" to="ublox/fix"/>	
+  </node>
+
+</launch>
+

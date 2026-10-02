@@ -1,0 +1,146 @@
+===============================================================================
+T870 진행 기록 2026-09-18
+===============================================================================
+
+1. 주차 런치 상태
+-------------------------------------------------------------------------------
+- 최신 T자 주차 LiDAR 선택 각도는 80.0 ~ 100.0 deg.
+- 거리 상한은 4.0 m, min_points_per_scan은 8.
+- 주차 런치에서는 lidar_safety_enabled=false 로 설정되어 있음.
+- 주차 런치에서는 enable_mission_stack=false 로 설정되어 있음.
+- 주차 런치에서는 enable_lane_preview=false 로 설정되어 있음.
+- 따라서 주차 중 카메라 교통신호 정지와 일반 LiDAR 장애물 E-stop은
+  주차 제어 경로에서 비활성화하는 방향으로 정리됨.
+- T-path 판정은 WP13/WP15에서 감지하고 WP20에서 최종 결정한다.
+- WP13에서 감지되면 B가 막힌 것으로 보고 A 경로(t_p(aa))를 선택한다.
+- WP15에서 감지되면 A가 막힌 것으로 보고 B 경로(t_p(ba))를 선택한다.
+- WP27 2차 판정은 최신 성공 기준에서는 비활성화함(enable_stage2=false).
+- T-path 판정 후 경로를 한 번 선택하고, 이후 계속 LiDAR를 장애물 정지용으로
+  사용하는 구조가 되지 않도록 분리함.
+
+2. 주차 경로 선택
+-------------------------------------------------------------------------------
+- t_p(aa), t_p(ba), t_p(ab), t_p(bb) 경로를 기록하고 확인함.
+- 최종 성공 기준은 WP13/WP15 감지, WP20 결정, 80~100 deg, 0.05~4.0 m,
+  point 8개 이상이다.
+- A와 B를 각각 막고 실차 확인했을 때 둘 다 감지 및 경로 진입 성공함.
+- 세부 기준과 구동 코드는 `t870_parking_notes.txt`의
+  "0. 최신 성공 기준: T 자 주차 LiDAR 선택 (2026-09-18)"에 정리함.
+
+3. 주행 정지 원인 조사
+-------------------------------------------------------------------------------
+- MANUAL 주행에서도 스로틀이 멈췄다가 재개되는 현상이 있었음.
+- Arduino 진단 로그에서 RC 스로틀은 살아 있는데 다음 상태가 반복됨:
+
+    RC:MANUAL TH:+77% Tgt:+0.00 PWM:0
+
+- `RC:LOST`도 한 번 발생했지만, 모든 정지가 RC:LOST만으로 설명되지는 않음.
+- 기존 펌웨어의 RC/I2C failsafe와 manualNeutralRequired 래치가 유력 원인으로
+  확인됨. 초기 보조 보고서는 120 ms, 메인 보드는 150 ms로 설정되어 있었음.
+- 이후 메인 I2C timeout과 서브 RC timeout을 모두 1초로 완화하고, 단일 I2C
+  checksum/부분 패킷 오류는 마지막 정상 보고서를 유지하도록 수정함.
+- 신호가 잠시 끊기면 메인 보드는 즉시 PWM=0으로 만들고, 다시 MANUAL이 되어도
+  스로틀을 중립으로 한 번 확인하기 전까지 재출발을 막음.
+- 바퀴를 공중에 띄웠을 때는 멈춤이 없고 실제 지면 주행에서만 증상이 커져,
+  RC 신호/전원강하/모터드라이버 부하 영향도 함께 확인해야 함.
+- dmesg에서는 Arduino USB 재연결 증거를 확인하지 못함.
+- MAVROS 상태는 connected=true, mode=MANUAL, armed=true였으나
+  `/mavros/rc/in` channels는 비어 있어 RC가 Pixhawk 직결이 아님을 확인함.
+
+4. Arduino CLI 및 펌웨어
+-------------------------------------------------------------------------------
+- Arduino CLI 1.5.1을 사용자 경로에 설치함:
+    /home/sxx/.local/bin/arduino-cli
+- 호스트 USB 확인 결과 메인 Arduino UNO는 `/dev/ttyACM0`.
+- `sketch_aug/sketch_aug.ino`를 Arduino UNO용으로 컴파일하고 업로드함.
+- 진단용 SAFE 로그를 잠시 추가했으나, 사용자 요청으로 해당 로그를 제거하고
+  업로드 전 상태로 다시 컴파일/업로드함.
+- 최종 메인 펌웨어 업로드 결과:
+    Sketch 13148 bytes, global variables 1039 bytes
+    upload port: /dev/ttyACM0
+- 1초 timeout 수정 후 메인 `/dev/ttyACM0`와 서브 `/dev/ttyACM1`에 모두
+  재컴파일/업로드 완료함.
+- `pwm_receiver_bridge/pwm_receiver_bridge.ino` 최종 global variables 427 bytes.
+
+5. 중요 하드웨어 구성 확인
+-------------------------------------------------------------------------------
+- 현재 사용자 확인상 보조 RC Arduino는 없음.
+- 그런데 현재 `sketch_aug.ino`는 RC를 직접 읽지 않고 I2C 주소 0x12의
+  보조 보드 RemoteReport를 읽는 구조임.
+- 따라서 보조 보드가 없으면 메인 보드는 RC를 정상 수신할 수 없고,
+  `remoteControlValid=false`, RC:LOST, Tgt=0, PWM=0 상태가 됨.
+- 현재 펌웨어와 실제 하드웨어 구성은 불일치함.
+- 다음 작업은 메인 Arduino가 RC 수신기 PWM을 직접 읽도록 펌웨어를 바꾸거나,
+  실제 보조 보드를 추가하는 것임. 배선 확인 전에는 실차 주행 금지.
+
+6. 다음 확인 순서
+-------------------------------------------------------------------------------
+1) RC 수신기 신호선이 어느 Arduino 핀으로 들어가는지 확인.
+2) 보조 보드 없이 메인 UNO가 직접 D4/D5/D6의 RC PWM을 읽는 방식으로
+   `sketch_aug.ino`를 통합할지 결정.
+3) 통합 후 바퀴를 띄운 상태에서 MANUAL RC:MANUAL/TH/PWM을 확인.
+4) 이후 저속 실차에서 전압강하와 RC 신호 누락을 동시에 기록.
+5) 주차 시험은 LiDAR/camera E-stop 비활성 설정을 유지한 뒤 재개.
+
+신호등 빨간색 감지 관련 기록은 `traffic_light_notes.txt`로 별도 관리함.
+
+7. 평행주차 경로 기록 및 최신 시험 상태
+-------------------------------------------------------------------------------
+- 평행주차용 `p_a.csv`, `p_b.csv`를 새로 기록 완료함.
+- p_a는 감지된 경우, p_b는 감지되지 않은 경우 사용할 경로로 정리함.
+- p_a.csv의 target_speed는 전 구간 0.56 m/s(약 2 km/h)로 수정함.
+- p_a 단독 추종에서 큰 방향 전환 후 후진 진입은 WP19~23으로 자동 판정됨.
+- 후진 조향은 `gps_invert_reverse_steering:=true`가 현재 차량 기준이다.
+- 후진 lookahead 최신 시험값은 `gps_reverse_lookahead_m:=1.0`이다.
+- WP21 진입 조향을 완화하기 위해 다음 시험은 `gps_follow_max_steer_rad:=0.20`을
+  사용한다.
+- 평행주차 자동 분기(selector) 실차 성공. WP4에서 0~40 deg,
+  0.05~5.5 m를 보고 WP5에서 확정한다. 감지=p_a, 미감지=p_b.
+- 최종 기준은 `t870_parallel_parking_notes.txt`에 별도 저장했다.
+- 새 p_b는 WP12/WP19 cusp가 검출되며 WP13~19를 후진하도록 확인했다.
+- p_b의 target_speed는 전 구간 0.56 m/s로 변경했다.
+- p_b 첫 시험 로그에서 WP9의 target_index가 WP14로 넘어가 정지 전 오른쪽
+  최대 조향이 발생한 것을 확인했다. 초기 전진 구간도 cusp WP11 너머를
+  lookahead 목표로 잡지 못하도록 수정하고 install_t870를 재빌드했다.
+- 수정 후 WP11 최소 오차 0.024 m까지 도달했지만 cusp brake distance 0이라
+  WP12로 색인이 넘어가지 못하고 계속 전진했다. p_b 다음 시험은
+  `gps_cusp_brake_distance_m:=0.35`를 사용하며 전환 첫 틱 조향도 0으로
+  강제하도록 follower를 수정했다.
+- 이후 모든 방향 전환마다 `/t870/shift_estop`을 걸도록 변경했다. Arduino는
+  이 신호가 true이면 속도 0 램프가 아니라 펌웨어 `E` 명령으로 PWM을 즉시
+  차단한다. 0.3초 이상 및 |wheel speed| <= 0.15 m/s 확인 후에만 반대
+  방향으로 출발한다. 전체 테스트 30개 통과 및 재빌드 완료.
+- p_b 후진 시작을 숫자로 보장하는 `gps_reverse_start_waypoint` 옵션을
+  추가했다. 새 p_b는 12, reverse stop은 19를 사용한다.
+
+8. 재시작 후 진행 가능 여부
+-------------------------------------------------------------------------------
+- T자 주차 최신 성공 기준은 `t870_parking_notes.txt`에 저장되어 있다.
+  WP13/WP15 LiDAR 감지 -> WP20 결정, 80~100 deg, 0.05~4.0 m,
+  min points 8, stage2 off 설정이다.
+- 평행주차 최신 기준도 `t870_parking_notes.txt`의
+  "0-1. 최신 평행주차 경로 상태"에 저장되어 있다.
+- 다음에 작업을 재개할 때 해당 메모와 이 진행 기록을 읽고 바로 T자 또는
+  p_a/p_b 평행주차 시험을 이어갈 수 있다.
+
+9. p_a 2 kph 최신 로그 분석 및 수정
+-------------------------------------------------------------------------------
+- 최신 로그: `/tmp/p_a_2kph_tracking.log`
+- 최신 tracking CSV: `gps_recordings/gps_tracking_20260918_224709.csv`
+- p_a는 WP19에서 정상적으로 REVERSE로 전환했고, WP23에서 후진 목표를
+  지나쳤다고 판단해 PARK_BRAKE/PARKED까지 들어갔다.
+- 문제는 PARKED 후 `Resuming forward tracking from waypoint 24`가 찍힌 뒤,
+  다음 tick에서 다시 WP23으로 묶이면서 REVERSE/FORWARD 전환을 반복한 점이다.
+- 원인은 후진->전진 재개 시 `shift_time`은 새로 잡았지만
+  `shift_hold_index`가 이전 전환의 WP23 값으로 남아 있어, settle 시간 동안
+  최근접점이 다시 WP23으로 강제된 것이다.
+- 수정 완료:
+  - `src/t870_control/t870_control/gps_path_follower_node.py`
+  - `install_t870/t870_control/lib/python3.12/site-packages/t870_control/gps_path_follower_node.py`
+  - PARKED 후 전진 재개 블록에서 `self.shift_hold_index = resume`을 설정한다.
+- 문법 확인:
+  `python3 -m py_compile src/.../gps_path_follower_node.py install_t870/.../gps_path_follower_node.py`
+  통과.
+- 다음 p_a 시험은 같은 2 kph 실행 명령을 그대로 사용해서, WP23 후 WP24 이후로
+  빠져나가는지 확인한다. 확인 포인트는 `Current waypoint: 24` 다음에 WP23으로
+  되돌아가지 않는지, 그리고 tracking CSV state가 `TRACKING|...L24+`로 이어지는지다.

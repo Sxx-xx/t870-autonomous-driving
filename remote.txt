@@ -1,0 +1,575 @@
+아래는 현재 사용 중인 헤네스브룬(BROON 계열) BLE Remote Module을 Arduino UNO에서 읽기 위해 실제 측정 및 분석한 내용이다.
+
+1. 시스템 목적
+기존 헤네스브룬 차량의 BLE 조종기와 BLE Remote Module을 재사용하여 Arduino UNO에서 다음 명령을 읽고 기존 차량 제어 코드에 통합하려고 한다.
+
+전진/후진 스로틀
+
+좌/우 조향
+
+정지 버튼
+
+이후 Arduino가 모터드라이버를 직접 제어
+
+구조:
+
+BLE 조종기
+→ BLE Remote Module
+→ UART
+→ Arduino UNO
+→ 조향/구동 모터 제어
+
+2. BLE Remote Module 핀
+모듈 PCB에서 확인된 핀:
+
+VDD3V : 3.3V
+
+UART RX
+
+UART TX
+
+GND
+
+Arduino에서 수신 데이터만 읽을 경우:
+
+BLE Module UART TX → Arduino D2
+BLE Module GND → Arduino GND
+
+현재 Arduino에서는 SoftwareSerial을 사용한다.
+
+중요:
+BLE Module은 3.3V UART 로직이다.
+
+BLE TX(3.3V) → Arduino UNO RX 입력은 직접 연결하여 사용 중이다.
+
+Arduino UNO TX는 5V 로직이므로 BLE Module RX에 직접 연결하면 안 된다.
+나중에 Arduino → BLE 통신이 필요하면 레벨시프터 또는 저항 분압을 사용해야 한다.
+
+현재는 BLE Module RX는 사용하지 않는다.
+
+3. UART 설정
+실제 테스트 결과 UART baud rate는:
+
+9600 baud
+
+이다.
+
+Arduino 예:
+
+#include <SoftwareSerial.h>
+
+SoftwareSerial BLE(2, 3);  // RX, TX
+
+void setup() {
+    Serial.begin(115200);  // PC 디버깅용
+    BLE.begin(9600);       // BLE Remote Module
+}
+BLE TX → Arduino D2
+
+D3은 현재 BLE RX와 연결하지 않는다.
+
+PC Serial baud와 BLE UART baud는 서로 별개이다.
+
+4. 실제 UART RAW 데이터
+수신기는 반복적으로 다음 구조의 데이터를 송신한다.
+
+예:
+
+02 33 41 41 33 39 42 30 31 03 00
+각 HEX를 ASCII로 변환하면:
+
+0x02
+"3AA39B01"
+0x03
+0x00
+즉 프레임 구조는 현재 다음과 같이 분석했다.
+
+0x02 | XXXXXXXX | 0x03 | 0x00
+ STX    8 ASCII    ETX
+8개의 ASCII HEX 문자열은:
+
+TTTSSSFF
+형태이다.
+
+TTT = throttle, 3자리 hexadecimal ASCII
+
+SSS = steering, 3자리 hexadecimal ASCII
+
+FF = flags/status, 2자리 hexadecimal ASCII
+
+따라서:
+
+3AA39B01
+은
+
+3AA | 39B | 01
+로 나뉜다.
+
+5. Throttle 실제 측정값
+실제 리모컨을 조작하여 측정한 값:
+
+중립
+약:
+
+938~939
+대표 중앙값:
+
+THROTTLE_CENTER = 939;
+풀 전진
+1087~1088
+대표값:
+
+THROTTLE_FORWARD = 1088;
+풀 후진
+876~877
+대표값:
+
+THROTTLE_REVERSE = 877;
+따라서:
+
+877             939                 1088
+ |---------------|--------------------|
+풀후진           중립                풀전진
+-100%             0%                 +100%
+중립 근처 값은 약간 흔들릴 수 있으므로 deadband를 적용할 것.
+
+권장 초기 deadband:
+
+±5
+6. Steering 실제 측정값
+중앙
+실제 최신 측정:
+
+897
+대표값:
+
+STEERING_CENTER = 897;
+풀 좌회전
+566
+대표값:
+
+STEERING_LEFT = 566;
+풀 우회전
+1247~1248
+대표값:
+
+STEERING_RIGHT = 1248;
+따라서:
+
+566             897                 1248
+ |---------------|--------------------|
+풀좌회전         중앙                풀우회전
+-100%             0%                 +100%
+조향 역시 중앙 부근 노이즈가 있을 수 있으므로 deadband를 적용할 것.
+
+권장 초기값:
+
+±8
+7. 정지 버튼
+일반 상태에서 flags 값:
+
+01
+정지 버튼을 눌렀을 때 실제 측정:
+
+11
+즉:
+
+Normal = 0x01
+STOP   = 0x11
+현재 분석상 bit 4, 즉:
+
+0x10
+이 STOP 플래그일 가능성이 매우 높다.
+
+따라서:
+
+bool stopPressed = (flags & 0x10) != 0;
+로 처리할 수 있다.
+
+STOP이 감지되면 안전을 위해 모터 PWM을 즉시 0으로 만들도록 구현할 것.
+
+단, 향후 다른 버튼을 측정하면 flags의 다른 비트도 분석해야 한다.
+
+8. 실제 패킷 예시
+기본/중립
+RAW:
+
+02 33 41 41 33 39 42 30 31 03 00
+ASCII payload:
+
+3AA39B01
+대략:
+
+Throttle ≈ 938
+Steering ≈ 923
+Flags = 01
+초기 측정 당시 조향 중앙이 923 부근이었으나 이후 실제 최종 캘리브레이션에서 steering center는 897로 측정되었다.
+
+현재 제어용 캘리브레이션에서는 반드시 최신 값인 897을 사용한다.
+
+풀 전진
+예:
+
+43F39B01
+Throttle:
+
+0x43F = 1087
+풀 후진
+예:
+
+36D / 36E 계열
+실측 decimal:
+
+876~877
+풀 좌회전
+예:
+
+3AA23601
+Steering:
+
+약 566
+풀 우회전
+Steering:
+
+1247~1248
+정지 버튼
+예:
+
+3B338111
+마지막 두 자리:
+
+11
+STOP flag 활성화.
+
+9. 권장 패킷 파서
+단순 pulseIn이나 PWM 신호가 아니다.
+
+이 수신기는 UART로 ASCII HEX 패킷을 보내므로 반드시 UART 패킷 파싱 방식으로 처리한다.
+
+권장 방식:
+
+0x02(STX)를 기다린다.
+
+STX가 들어오면 payload index를 0으로 초기화한다.
+
+0x03(ETX)이 나올 때까지 ASCII 문자들을 저장한다.
+
+정확히 8개의 ASCII HEX 문자가 들어왔는지 확인한다.
+
+3 + 3 + 2 자리로 나누어 HEX → integer 변환한다.
+
+ETX 뒤의 0x00은 현재 별도의 의미 없이 terminator/padding으로 보이며 무시해도 된다.
+
+참고 구현:
+
+#include <SoftwareSerial.h>
+
+SoftwareSerial BLE(2, 3);
+
+char payload[9];
+uint8_t payloadIndex = 0;
+bool receiving = false;
+
+const int THROTTLE_REVERSE = 877;
+const int THROTTLE_CENTER = 939;
+const int THROTTLE_FORWARD = 1088;
+
+const int STEERING_LEFT = 566;
+const int STEERING_CENTER = 897;
+const int STEERING_RIGHT = 1248;
+
+int hexValue(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+
+    return -1;
+}
+
+uint16_t hex3ToInt(const char *p)
+{
+    return ((uint16_t)hexValue(p[0]) << 8) |
+           ((uint16_t)hexValue(p[1]) << 4) |
+           ((uint16_t)hexValue(p[2]));
+}
+
+uint8_t hex2ToInt(const char *p)
+{
+    return ((uint8_t)hexValue(p[0]) << 4) |
+           ((uint8_t)hexValue(p[1]));
+}
+
+int convertThrottle(int raw)
+{
+    const int DEAD = 5;
+
+    if (raw >= THROTTLE_CENTER - DEAD &&
+        raw <= THROTTLE_CENTER + DEAD)
+        return 0;
+
+    if (raw > THROTTLE_CENTER) {
+        int value = map(
+            raw,
+            THROTTLE_CENTER + DEAD,
+            THROTTLE_FORWARD,
+            0,
+            100
+        );
+
+        return constrain(value, 0, 100);
+    }
+
+    int value = map(
+        raw,
+        THROTTLE_CENTER - DEAD,
+        THROTTLE_REVERSE,
+        0,
+        -100
+    );
+
+    return constrain(value, -100, 0);
+}
+
+int convertSteering(int raw)
+{
+    const int DEAD = 8;
+
+    if (raw >= STEERING_CENTER - DEAD &&
+        raw <= STEERING_CENTER + DEAD)
+        return 0;
+
+    if (raw > STEERING_CENTER) {
+        int value = map(
+            raw,
+            STEERING_CENTER + DEAD,
+            STEERING_RIGHT,
+            0,
+            100
+        );
+
+        return constrain(value, 0, 100);
+    }
+
+    int value = map(
+        raw,
+        STEERING_CENTER - DEAD,
+        STEERING_LEFT,
+        0,
+        -100
+    );
+
+    return constrain(value, -100, 0);
+}
+
+void processPacket()
+{
+    int throttleRaw = hex3ToInt(&payload[0]);
+    int steeringRaw = hex3ToInt(&payload[3]);
+    uint8_t flags = hex2ToInt(&payload[6]);
+
+    int throttleCommand = convertThrottle(throttleRaw);
+    int steeringCommand = convertSteering(steeringRaw);
+
+    bool stopPressed = (flags & 0x10) != 0;
+
+    Serial.print("TH raw=");
+    Serial.print(throttleRaw);
+
+    Serial.print(" TH cmd=");
+    Serial.print(throttleCommand);
+
+    Serial.print(" ST raw=");
+    Serial.print(steeringRaw);
+
+    Serial.print(" ST cmd=");
+    Serial.print(steeringCommand);
+
+    Serial.print(" FLAGS=0x");
+    if (flags < 0x10)
+        Serial.print('0');
+    Serial.print(flags, HEX);
+
+    if (stopPressed)
+        Serial.print(" STOP");
+
+    Serial.println();
+}
+
+void readBleRemote()
+{
+    while (BLE.available()) {
+        uint8_t data = BLE.read();
+
+        if (data == 0x02) {
+            receiving = true;
+            payloadIndex = 0;
+        }
+
+        else if (data == 0x03 && receiving) {
+            receiving = false;
+
+            if (payloadIndex == 8) {
+                payload[8] = '\0';
+                processPacket();
+            }
+        }
+
+        else if (receiving) {
+            if (payloadIndex < 8) {
+                payload[payloadIndex++] = (char)data;
+            }
+            else {
+                // malformed packet
+                receiving = false;
+                payloadIndex = 0;
+            }
+        }
+    }
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    BLE.begin(9600);
+}
+
+void loop()
+{
+    readBleRemote();
+}
+10. 기존 차량 Arduino 코드에 통합할 때 사용할 값
+통합 코드에서는 아래 변수 형태로 사용하는 것을 권장한다.
+
+int rcThrottleRaw;
+int rcSteeringRaw;
+
+int rcThrottleCommand;   // -100 ~ +100
+int rcSteeringCommand;   // -100 ~ +100
+
+uint8_t rcFlags;
+
+bool rcStop;
+bool rcConnected;
+정의:
+
+rcThrottleCommand
+-100 = 풀 후진
+0    = 중립
++100 = 풀 전진
+
+rcSteeringCommand
+-100 = 풀 좌회전
+0    = 중앙
++100 = 풀 우회전
+11. 반드시 추가해야 하는 통신 끊김 Failsafe
+BLE 리모컨을 차량 제어에 사용할 것이므로 마지막 정상 패킷 수신 시간을 기록해야 한다.
+
+예:
+
+unsigned long lastRcPacketMs = 0;
+정상 패킷을 받을 때:
+
+lastRcPacketMs = millis();
+rcConnected = true;
+loop에서:
+
+if (millis() - lastRcPacketMs > 300) {
+    rcConnected = false;
+    rcThrottleCommand = 0;
+    rcSteeringCommand = 0;
+
+    // 구동 PWM 반드시 0
+}
+300ms 정도를 초기값으로 사용할 수 있다.
+
+BLE 신호가 끊겼는데 마지막 전진 명령이 계속 유지되는 일이 절대로 없도록 해야 한다.
+
+12. STOP 우선순위
+제어 우선순위는 최소한 다음처럼 구성할 것.
+
+1. 물리적 비상정지
+2. BLE 조종기 STOP 버튼
+3. BLE 통신 끊김 failsafe
+4. 기타 안전 조건
+5. 수동/자율 제어 명령
+예:
+
+if (emergencyStop ||
+    rcStop ||
+    !rcConnected) {
+
+    drivePwm = 0;
+    steeringPwm = 0;
+}
+단, 실제 조향 시스템이 포텐셔미터 피드백을 이용해 중앙 복귀하도록 되어 있다면 rcStop 발생 시 "조향 PWM 완전 0" 또는 "중앙 복귀" 중 어떤 동작을 할지는 기존 차량 안전 로직에 맞춰 결정한다.
+
+구동 모터는 STOP 시 반드시 출력 0.
+
+13. 현재 확정된 주요 상수
+// BLE UART
+#define BLE_BAUD 9600
+
+// Throttle
+#define THROTTLE_REVERSE 877
+#define THROTTLE_CENTER 939
+#define THROTTLE_FORWARD 1088
+#define THROTTLE_DEADBAND 5
+
+// Steering
+#define STEERING_LEFT 566
+#define STEERING_CENTER 897
+#define STEERING_RIGHT 1248
+#define STEERING_DEADBAND 8
+
+// STOP flag
+#define RC_STOP_MASK 0x10
+
+// UART packet
+#define STX 0x02
+#define ETX 0x03
+#define PAYLOAD_LENGTH 8
+
+// initial failsafe
+#define RC_TIMEOUT_MS 300
+14. Codex에게 요청하는 작업
+이 정보를 바탕으로 현재 프로젝트의 기존 Arduino 코드를 분석하고 BLE 조종기 입력 기능을 통합해라.
+
+요구사항:
+
+기존 핀 정의와 Timer 사용을 먼저 확인한다.
+
+BLE Remote Module UART TX를 받을 수 있는 Arduino 핀을 선택한다.
+
+기존에 사용 중인 핀과 충돌시키지 않는다.
+
+BLE UART는 9600 baud이다.
+
+패킷은 0x02 + ASCII HEX 8자리 + 0x03 + 0x00 형태이다.
+
+throttle/steering/flags를 각각 파싱한다.
+
+실제 캘리브레이션 값을 사용한다.
+
+throttle과 steering을 -100~+100으로 정규화한다.
+
+deadband를 적용한다.
+
+STOP flag 0x10을 안전정지 입력으로 사용한다.
+
+일정 시간 패킷이 수신되지 않으면 failsafe를 작동시킨다.
+
+기존 모터 PWM, DIR, 조향 포텐셔미터 피드백 제어 구조를 최대한 유지한다.
+
+delay() 기반 blocking 코드는 피하고 millis() 기반으로 작성한다.
+
+SoftwareSerial 사용이 기존 코드의 타이밍/인터럽트와 충돌한다면 대체 방법도 검토한다.
+
+수정 후 전체 Arduino 코드를 제공하고 변경된 부분을 설명한다.
+
+특히 Arduino UNO에서 SoftwareSerial과 기존 encoder interrupt, Timer1 PWM 등이 같이 사용될 수 있으므로 기존 프로젝트 코드의 핀/타이머/인터럽트 충돌을 반드시 확인한 뒤 통합할 것.

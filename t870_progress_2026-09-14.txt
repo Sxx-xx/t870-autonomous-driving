@@ -1,0 +1,442 @@
+T870 GPS Pure Pursuit 작업 메모 (2026-09-14)
+
+[현재 적용 파일]
+- GPS 경로: gps_recordings/1.csv
+- CSV 형식: longitude,latitude,id,distance,angle,target_speed
+- target_speed: 전체 행 2.7778 m/s (약 10 km/h)
+- 경로는 QGIS에서 수정한 1.csv를 사용
+
+[GPS follower 적용 내용]
+- 위치/경로: WGS84 longitude/latitude를 UTM으로 변환해 Pure Pursuit 수행
+- LAD는 보간 없이 속도 구간별 고정값 사용 (2026-09-14 23시 기준)
+  - 0~2 km/h: 5.0 m
+  - 2~4 km/h: 5.0 m
+  - 4~6 km/h: 5.5 m
+  - 6~8 km/h: 6.0 m
+  - 8~10 km/h 이상: 7.0 m
+  경위와 주의사항은 [LAD 밴드 정리] 참조
+- 기본 주행 속도: 2.7778 m/s (10 km/h)
+- 축거: 1.0 -> 0.725 m (줄자 실측. 0.8 로 잠시 썼다가 재측정으로 확정)
+- 조향 한계: 0.12 -> 0.20 rad (게인 보정 후 재설정, 실제 11.46도)
+- GPS 점프 방지: 시간 대비 비정상 위치 이동 거부
+- Waypoint 점프 방지: 이전 waypoint 주변의 제한된 구간만 탐색
+- heading 우선순위: gps_course -> corrected_imu -> route_tangent
+  2026-09-14 23시 수정으로 corrected_imu 가 절대경로에서도 동작한다.
+  route_tangent 는 사실상 쓰이지 않는다. [heading 폴백 해결] 참조
+- 조향 필터/데드밴드/조향 변화율 제한 유지
+- route_tangent_max_steer_rad 0.15: heading 이 경로 접선 추측일 때만 조향 제한
+- imu_align_gain 0.02: GPS course 로 IMU 오프셋을 저역통과 추종
+- 경로 오차 정지 한계: 5.0 m에서 10.0 m로 변경
+- GPS tracking CSV 자동 기록 유지
+- E-stop 민감도는 변경하지 않음
+
+[Launch 파일]
+- src/t870_control/launch/t870_lane_autonomy.launch.py
+- Python 기본 LAD와 launch 기본 LAD를 일치시킴: 2.0/2.7/3.5/6.0/7.0 m
+- launch가 카메라 preview, LiDAR, Arduino, GPS, localization, GPS follower,
+  원격 모드 제어를 함께 실행
+- 현재 실행 시 require_operator_heartbeat:=false 사용
+- startup_control_mode:=GPS 는 더 이상 쓰지 않음.
+  조종기 AUTO 스위치가 arming을 담당하도록 바꿈(아래 [조종기 arming] 참고)
+- 신규 인자: rc_arm_enabled(기본 true), rc_arm_mode(기본 GPS)
+
+[검증]
+- Python 문법 검사 통과
+- t870_control colcon 빌드 통과
+- 최근 GPS 로그에서 한 차례 STOP_ROUTE_ERROR 확인:
+  GPS 경로 오차가 약 5.15 m가 되면서 follower가 정지했고 조향값이 0이 됨.
+  이후 회복 가능하도록 한계를 10 m로 조정함.
+- /gps/fix 출력 확인 완료:
+  status=0, service=1, latitude 약 35.074299, longitude 약 129.087915
+- 조종기 arming 반영 후 재검증:
+  t870_control colcon 빌드 통과 (colcon build --base-paths src/t870_control
+  --build-base build_t870 --install-base install_t870)
+  pytest src/t870_control/test/ 24개 전부 통과
+  Arduino 상태 줄 정규식 파싱을 AUTO/MANUAL/LOST 샘플로 확인
+- 주의: src/CMakeLists.txt 때문에 --packages-select t870_control 는 패키지를
+  못 찾음. --base-paths src/t870_control 를 사용해야 함.
+
+[실행]
+- 새 터미널마다 다음을 먼저 실행:
+  source /opt/ros/jazzy/setup.bash
+  source install_t870/setup.bash
+- 터미널 1: MAVROS. overlay 환경을 unset 한 뒤 시스템 ROS 로만 실행한다.
+  (상세 명령은 t870_progress_2026-09-11.txt 3절)
+  이 launch 는 MAVROS 를 띄우지 않는다. 없으면 조향이 죽는다.
+- 터미널 2:
+  ros2 launch t870_control t870_lane_autonomy.launch.py \
+    lidar_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_...-if00-port0 \
+    arduino_serial_port:=/dev/serial/by-id/usb-Arduino_...-if00 \
+    record_gps_path:=false \
+    enable_localization:=true \
+    enable_gps_follower:=true \
+    gps_follow_path_file:=<절대경로>/gps_recordings/1.csv \
+    require_operator_heartbeat:=false
+  enable_gps_follower 기본값이 false 이므로 반드시 true 로 줄 것.
+  wheelbase_m(0.8), gps_follow_max_steer_rad(0.20), gps_follow_speed_mps
+  (2.7778) 는 이제 기본값이라 생략 가능하다.
+- 터미널 3: ros2 topic echo /t870/remote_rc_mode
+  MANUAL 이 찍히는지 반드시 확인. 안 나오면 Arduino 시리얼 미연결이고
+  그 상태로는 AUTO 로 올려도 차가 안 움직인다.
+- 터미널 4: ros2 topic echo /gps/cross_track_error
+- 실행 전 잔여 프로세스 확인 필수:
+  ps -eo pid,cmd | grep -E "t870|ros2 launch|mavros" | grep -v grep
+  터미널을 닫아도 ros2 launch 가 살아남아 GPS/Arduino 포트를 물고 있는
+  경우가 실제로 있었다. 그러면 새 세션이 조용히 실패한다.
+- 현장용 절차서(웹):
+  https://claude.ai/code/artifact/fe4a3d60-d4b7-4b6b-81b6-a0e19483fff2
+- 조종기를 MANUAL에 둔 채로 launch 해도 안전함.
+  ROS 모드는 STOP으로 유지되고 Arduino도 MANUAL에서는 ROS 명령을 무시함.
+- 조종기를 AUTO로 올리는 순간 GPS 추종이 시작됨. 별도 출발 버튼은 없음.
+
+[조종기 arming] (2026-09-14 적용)
+- 목표: MANUAL 상태에서 launch를 미리 띄워두고, 조종기를 AUTO로 올리면
+  그때 GPS 추종이 시작되도록 함.
+
+- 확인된 사실:
+  조종기 AUTO/MANUAL은 원래 아두이노 펌웨어 레벨 게이트였고 ROS와 무관했음.
+  RC 수신기 D6 -> 보조 Arduino(pwm_receiver_bridge.ino) -> I2C -> 메인 Arduino
+  AUTO  : 조향 = Pixhawk PWM(SERVO9), 속도 = USB 시리얼 명령
+  MANUAL: 조종기 조향/스로틀 직접 사용, ROS 명령 완전 무시
+  /mavros/rc/in 을 구독하는 코드는 워크스페이스에 없었음.
+  /t870/control_mode 를 발행하는 곳은 웹 UI 하나뿐이었음.
+
+- 펌웨어는 손대지 않아도 됐음:
+  sketch_aug.ino 의 printStatus()가 이미 "RC:AUTO|MANUAL|LOST"를 출력하고
+  arduino_drive_node 가 이미 그 줄(Act: 포함)을 읽고 있었음.
+  Arduino 재업로드 불필요, 배선 변경 불필요.
+
+- 같이 고친 버그:
+  gps_path_follower_node 의 bounded_nearest_index 는 첫 fix에서 인덱스를 잡은
+  뒤 max(previous_index, ...) 때문에 뒤로 갈 수 없었음. MANUAL로 런치하고
+  차를 수동으로 경로 시작점까지 옮기면 인덱스가 런치 지점에 고정되어
+  STOP_ROUTE_ERROR 만 나고 회복 불가였음.
+
+- 변경한 파일:
+  1) t870_control/arduino_drive_node.py
+     텔레메트리에서 RC 상태 파싱 후 발행
+     /t870/remote_auto (Bool), /t870/remote_rc_mode (String)
+  2) t870_control/remote_mode_control_node.py
+     /t870/remote_auto 구독.
+     MANUAL->AUTO 엣지에서 rc_arm_mode(기본 GPS) 선택,
+     AUTO->MANUAL 엣지에서 즉시 STOP.
+     selected_command 상시 가드: 조종기가 MANUAL이거나 RC 텔레메트리가
+     rc_timeout_sec(1.5s) 이상 끊기면 웹 UI 조작과 무관하게 STOP 강제.
+     신규 파라미터: rc_arm_enabled, rc_arm_mode, rc_timeout_sec
+  3) t870_control/gps_path_follower_node.py
+     /t870/control_mode 구독. GPS 모드로 진입할 때마다
+     nearest_initialized=False 로 리셋해 경로 전체에서 최근접 waypoint 재획득.
+  4) launch/t870_indoor_lidar.launch.py, launch/t870_lane_autonomy.launch.py
+     rc_arm_enabled / rc_arm_mode 인자 추가 및 전달
+
+- 동작 순서:
+  MANUAL로 launch -> 모드 STOP 유지, 차 정지
+  -> 조종기 AUTO 전환 -> 모드 GPS 자동 전환 + 최근접 waypoint 재획득
+  -> Arduino 전환 정지 1초(MODE_CHANGE_STOP_MS) 후 주행 시작
+  -> 조종기 MANUAL로 내리면 즉시 STOP, 조종기 직접 조작으로 복귀
+
+- 확인 토픽:
+  ros2 topic echo /t870/remote_rc_mode   (AUTO / MANUAL / LOST)
+  ros2 topic echo /t870/control_mode     (STOP -> GPS 전환 확인)
+
+[직진 피시테일 / 조향 게인] (2026-09-14 조사)
+
+  ※ 아래 2.62배는 "최대 조향각 30도" 가정으로 계산한 값이다. 이후 실측에서
+    실제 풀락이 16.9도로 나와 진짜 배율은 1.85배였다. 확정 수치는
+    [조향 캘리브레이션 실측 결과] 섹션을 볼 것. 이 섹션은 조사 경위 기록용.
+
+- 증상: 직진 구간에서 좌우로 흔들림.
+- 원인: ROS가 계산한 조향각이 실제 바퀴까지 가면서 증폭됨 (가정 기준 2.62배).
+  1) t870_indoor_lidar.launch.py 의 max_steer_angle_rad = 0.25 인데
+     t870_actuator_redesign.txt:145 의 실제 최대 조향각은 30도(0.5236 rad).
+     -> 2.09배
+  2) ROS 출력 PWM 스팬 1000/1500/2000 (±500us) vs
+     sketch_aug.ino PIXHAWK_PWM_MIN/CENTER/MAX_US 1100/1500/1900 (±400us).
+     Arduino가 ±400us를 lock-to-lock으로 해석함. -> 1.25배
+  합계 2.09 x 1.25 = 2.62배.
+- Pure Pursuit는 명령한 각도가 그대로 실현된다고 가정한 폐루프이므로
+  게인 2.62배는 직진 중 과보정 -> 중심선 초과 -> 반대 과보정으로 이어짐.
+  코너는 조향이 포화되어 진동 여지가 없고 직진에서 두드러짐.
+- 당시 계산한 매핑 (30도 가정, 수정 전):
+  0.12 rad 명령 -> PWM 1740 -> 실제 18.0도
+  0.20 rad 명령 -> PWM 1900 -> 실제 30.0도 (풀락)
+  이 가정 때문에 "0.2 는 풀락이라 쓰면 안 됨"이라고 판단했으나, 실측 후
+  게인을 1.0 으로 잡은 현재는 0.20 이 실제 11.46도로 정상 운용값이다.
+
+- 조치 1 (적용 완료): PWM 스팬 일치
+  t870_indoor_lidar.launch.py 의 pixhawk_vehicle_interface_node 에
+  steering_pwm_min 1100 / steering_pwm_trim 1500 / steering_pwm_max 1900 추가.
+  게인 2.62배 -> 2.09배. 빌드 통과.
+  수정 후: 0.12 rad -> PWM 1692 -> 실제 14.4도
+
+- 실측 도구 (작성 완료): src/t870_control/tools/fit_steering_circle.py
+  MANUAL 풀락 원주행을 t870_gps_record.launch.py 로 기록한 CSV를 넣으면
+  좌/우 원을 분리해 최소제곱 원 피팅 -> 반지름 -> 조향각(atan(축거/반지름))
+  -> max_steer_angle_rad 권장값까지 출력한다.
+  합성 데이터 검증 (GPS 노이즈 sigma 0.22~0.30 m 주입):
+    3바퀴 r=3.90/4.40 -> 참값 14.39/12.81도, 측정 14.43/12.83도
+    3바퀴 r=1.73(30도) -> 참값 30.00/27.15도, 측정 29.96/26.76도
+    2바퀴 r=2.75(20도) -> 참값 20.00/17.88도, 측정 20.10/17.95도
+    1바퀴는 오차 5% 수준이고 경고가 뜬다. 반드시 좌우 3바퀴씩 돌 것.
+  --baseline 기본값 2.0 을 낮추면 작은 원에서 오히려 깨진다. 건드리지 말 것.
+
+- 조치 2 (미적용, 실측 필요): max_steer_angle_rad 를 실제 lock 각도로
+  30도는 t870_actuator_redesign.txt 에 "가정"으로 적힌 값임.
+  차를 띄우고 Arduino 시리얼 's' 개루프 명령으로 좌/우 풀락까지 돌린 뒤
+  POT 값과 실제 바퀴 각도를 각도기로 실측할 것.
+  pixhawk_steering_dry_run/, pixhawk_pwm_check/ 가 그 용도로 있음.
+  실측값을 넣으면 게인이 1.0이 됨. 그 다음에 gps_follow_max_steer_rad 를
+  0.25~0.30 부근에서 다시 잡아야 함. 순서: 게인 먼저, 한계각 나중.
+
+[조향 캘리브레이션 실측 결과] (2026-09-14, 적용 완료)
+
+(1) 풀락 각도 - MANUAL 풀락 원주행, gps_recordings/fullLock_circle2.csv
+    좌 2.90바퀴 반지름 2.605 m -> 15.55도  (축거 0.725 기준)
+    우 2.71바퀴 반지름 2.651 m -> 15.30도
+    ※ 축거를 0.8 로 잡았을 때는 17.07 / 16.79 도였다. 조향각은 축거에
+      정비례하므로 축거가 바뀌면 반드시 다시 계산해야 한다.
+    피팅 잔차 0.070 / 0.075 m (아주 양호)
+    좌우 비대칭 1.7% 뿐. POT 스팬 13% 비대칭은 조향각에 나타나지 않으므로
+    비대칭 보정은 불필요하다.
+    -> "최대 조향각 30도"는 틀린 가정이었다. 실제는 약 16.9도.
+
+(2) 중앙 오차 - 스틱 중립 MANUAL 직진, gps_recordings/center_check.csv
+    Run1 방위 19도  27.2 m 반지름  82.4 m 우측으로 휨 (잔차 0.025 m)
+    Run2 방위 188도 21.4 m 반지름 111.0 m 우측으로 휨 (잔차 0.065 m)
+    방위가 169도 차이(반대 방향)인데 둘 다 같은 쪽으로 휘었다.
+    노면 경사라면 반대로 휘어야 하므로 이것은 조향 중앙 오차다.
+    주행거리 가중 평균 13.1 counts, 상시 0.50도 우타각.
+    ※ 중앙 오차는 축거에 무관하다. 잔여각/counts당각 = (L/R)/(L/R_lock)*span
+      에서 L 이 상쇄된다. 축거 0.8 -> 0.725 로 바꿔도 13.2 -> 13.1 이므로
+      POT_AT_CENTER = 543 은 그대로 유효하다.
+
+(3) 적용한 값
+    sketch_aug.ino        POT_AT_CENTER      556  -> 543   ** 재업로드 필요 **
+    t870_indoor_lidar     max_steer_angle_rad 0.25 -> 0.2670
+    t870_lane_autonomy    gps_follow_max_steer_rad 0.12 -> 0.20
+    t870_lane_autonomy    wheelbase_m         1.0  -> 0.725
+    gps_path_follower     maximum_steering_rad 0.25 -> 0.20
+    gps_path_follower     wheelbase_m         1.0  -> 0.725
+    PWM 스팬 1000/2000 -> 1100/1900 과 합쳐 게인 1.00x
+
+(4) 게인 1.0 이후 조향 명령 대 실제 각도 (풀락 15.30도 기준)
+    0.10 rad ->  5.73도 (풀락의 37%)
+    0.15 rad ->  8.59도 (풀락의 56%)
+    0.20 rad -> 11.46도 (풀락의 75%)
+    최소 선회 반지름: 한계 0.20 에서 3.58 m, 풀락에서 2.65 m
+    참고: 오늘 아침에는 0.12 rad 명령이 실제 12.7도였다. 새 기본값 0.20 은
+    실제 11.5도이므로 아침보다 오히려 약간 덜 꺾인다.
+
+(5) 비례 제어 구간 (축거 0.725, 한계 0.20 rad, 이 alpha 넘으면 bang-bang)
+    LAD 2.0 m -> 16.2도,  2.7 m -> 22.2도,  3.5 m -> 29.3도
+    LAD 6.0 m -> 57.0도,  7.0 m -> 78.1도
+    아침(축거 1.0, 한계 0.12)에는 LAD 2.0 에서 6.9도였다. 크게 개선됨.
+
+(6) 남은 주의
+    POT_AT_CENTER 를 543 으로 바꾸면 좌우 스팬이 509/449 -> 496/462 로
+    바뀐다. 엄밀히는 재업로드 후 풀락을 다시 재야 하지만 변화가 3% 수준이라
+    실용상 무시 가능하다.
+    측정 도구: src/t870_control/tools/fit_steering_circle.py
+      풀락 원: --wheelbase 0.8
+      중앙 확인: --wheelbase 0.8 --straight
+
+[AUTO 실주행 결과] (2026-09-14 04:00, gps_tracking_20260914_035950.csv)
+
+전체 123초 로그지만 AUTO 로 실제 주행한 구간은 t=56~106 의 50초다.
+elapsed_sec 의 t=0 은 AUTO 전환이 아니라 launch(follower 노드 시작) 시점이다.
+
+  t=0~33    launch 후 정지 대기 (조종기 MANUAL)
+  t=33~47   짧은 이동 4.6 m, waypoint 528 고정. 위치 조정으로 보임
+  t=47~56   정지
+  t=56      AUTO 주행 시작 (waypoint 528 -> 529 전진 개시)
+  t=100~106 코너 통과 (경로 idx 628~637, 반지름 7.6 m, 좌 86도)
+  t=106     사용자가 path 이슈로 MANUAL 전환 (회수)
+  t=119     정지
+
+AUTO 구간(t=56~106) 성능:
+  주행거리   107.2 m, waypoint 528 -> 637 (109점)
+  속도       평균 2.12, 최대 2.71 m/s (9.8 km/h)
+  경로오차   평균 0.62 m, 최대 1.16 m
+             1 m 이내 96%, 1.5 m 이내 100%
+  조향       포화율 0.0%, |조향| 평균 0.043 rad (한계 0.20의 21%)
+  부호 반전  50초에 3회 -> 피시테일 사실상 없음
+  STOP_ROUTE_ERROR 0행
+
+오늘 아침(015310) 대비:
+  조향 포화율      100.0%  ->   0.0%
+  경로오차 평균     2.21 m  ->  0.62 m
+  STOP_ROUTE_ERROR  550행  ->     0행
+  -> 조향 게인 보정(1.85x -> 1.00x)이 실주행에서 확인됨.
+
+분석 방법 메모 (중요):
+  tracking CSV 는 조종기가 MANUAL 이어도 follower 가 계속 기록한다.
+  state 가 TRACKING 이라고 해서 차가 ROS 제어로 움직인 것은 아니다.
+  AUTO/MANUAL 구분은 "조향 명령 대비 실제 선회량"으로 판별한다.
+    dheading/dt = -v*tan(delta)/L   (positive_right=True 이므로 부호 주의)
+  반드시 부호를 포함해 비교할 것. |조향| 누적과 순 회전량을 비교하면
+  좌우 보정이 상쇄되어 AUTO 구간도 "조향 안 먹힘"으로 잘못 나온다.
+  이번 로그 판정 결과:
+    t=56~100  추종률  57%  -> AUTO
+    t=100~106 추종률 103%  -> AUTO, 코너 조향 정확히 먹음
+    t=106~119 추종률  -1%  -> MANUAL
+  따라서 t=106 이후 수치(최대 오차 6.55 m, alpha 122도, 포화 100%)는
+  AUTO 성능이 아니다. 회수 후 follower 가 혼자 계산한 값이다.
+
+미해결로 남은 것:
+  - 사용자가 t=106 에 회수한 "path 이슈"의 정체는 아직 확인 안 됨.
+    경로 데이터 자체는 1.00 m 균일 간격, 점프 없음.
+    가장 급한 코너(idx 632) 반지름 7.6 m, 필요 조향 5.98도로 한계의 52%.
+    waypoint 637 이후 경로가 어디로 가는지 확인 필요.
+  - waypoint 인덱스 단조 증가로 인한 복구 불가:
+    bounded_nearest_index 가 max(previous_index, ...) 라서 뒤로 못 간다.
+    한번 벌어지면 목표점이 차 뒤로 가고(alpha > 90도) 복구가 안 된다.
+    정지 시점에 follower 는 wp 651, 실제 최근접은 648 이었다.
+
+[새 경로 기록 시 제약] (축거 0.725, 조향 한계 0.20 rad 기준)
+- 최소 선회 반지름 3.58 m. 풀락으로도 2.65 m 가 물리 한계다.
+- 코너 반지름별 필요 조향 (한계 0.20 대비):
+    4.0 m -> 10.27도 (90%)   여유 없음
+    5.0 m ->  8.25도 (72%)
+    6.0 m ->  6.89도 (60%)
+    7.0 m ->  5.91도 (52%)
+   10.0 m ->  4.15도 (36%)
+- Pure Pursuit 는 LAD 가 코너 반지름보다 크면 코너를 자른다.
+  10 km/h 에서 LAD 가 7.0 m 이므로 그 속도로 돌 코너는 반지름 7 m 이상.
+  더 급한 코너는 CSV 의 target_speed 열을 행별로 낮춰 LAD 를 줄일 것
+  (4 km/h 면 LAD 2.7 m).
+- 기록 명령:
+  ros2 launch t870_control t870_gps_record.launch.py \
+    start_recording:=true minimum_distance_m:=1.0 path_name:=<이름>
+
+[heading 폴백 해결] (2026-09-14 23시, 적용 완료)
+
+증상: 저속에서 방향이 조금만 틀어져도 조향이 확 꺾이며 경로를 이탈하고,
+      그 뒤로는 영영 경로를 못 따라감. 속도가 붙으면 잘 따라감.
+
+원인 1 - corrected_imu 가지가 코드상 도달 불가였다.
+  current_heading() 의 조건이 이랬다:
+    if (self.heading_offset is not None and self.imu_yaw is not None ...):
+        offset = (self.heading_offset
+                  if self.heading_offset is not None else self.imu_yaw_offset)
+  앞의 heading_offset is not None 때문에 뒤의 imu_yaw_offset 폴백은 죽은 코드였다.
+  heading_offset 은 align_initial_heading_if_ready() 에서만 설정되는데 그 함수는
+  not self.relative_route 이면 즉시 return 한다. 1.csv 는 절대 WGS84 경로라
+  heading_offset 이 영원히 None -> IMU heading 이 전혀 쓰이지 않았다.
+  결국 GPS course 가 없는 저속에서는 route_tangent(경로 접선을 heading 이라고
+  가정하는 값) 밖에 없었고, 실측 heading 오차가 20~40도였다.
+
+원인 2 - route_tangent 에서 gps_course 로 바뀌는 순간의 계단 입력.
+  오늘 로그 18회 전환에서 heading 점프 평균 39.6도(최대 168도),
+  전환 직후 1초 조향 변화폭 평균 0.117 rad(한계 0.20의 59%).
+
+수정한 것:
+  1) current_heading() 조건에서 heading_offset is not None 제거.
+     MAVROS /mavros/imu/data 는 FCU 자세를 ENU 로 발행하므로 yaw 가 이미
+     atan2(north, east) 와 같은 규약의 절대방위다. imu_yaw_offset_rad(0.0)
+     가 트림 역할만 한다. 정지 상태에서도 실제 heading 을 얻는다.
+  2) velocity_callback 에 align_imu_to_course() 추가. GPS course 가 유효할
+     때마다 IMU 오프셋을 저역통과(imu_align_gain 0.02)로 추종한다.
+     IMU 드리프트를 따라가면서 course 가 끊겨도 heading 을 유지한다.
+  3) route_tangent_max_steer_rad 신설. heading 이 경로 접선 추측일 때만
+     조향을 제한한다. 0.05 로 넣었다가 선회 반지름이 14.5 m 가 되어 경로
+     복귀가 불가능했고(차가 얼라이 틀어진 것처럼 계속 한쪽으로 감),
+     0.15(반지름 4.8 m)로 올려 복귀 가능하게 했다.
+
+결과 (gps_tracking_20260914_232150.csv, 정상 추종 구간 65초):
+  route_tangent    60~79%  ->  0.1% (2행)
+  corrected_imu    0(도달불가) -> 878행
+  heading 오차     20~40도 ->  3.8도
+  조향 포화        100%    ->  0%
+  경로오차         평균 0.73 m, 최대 1.99 m, 1 m 이내 73%
+  속도             최대 2.29 m/s (8.3 km/h)
+
+[LAD 밴드 정리] (2026-09-14 23시)
+
+LAD = Lookahead Distance. 경로 위에서 겨냥할 점까지의 거리.
+짧으면 같은 오차에 세게 꺾고(정확하지만 흔들림), 길면 완만하다(부드럽지만
+코너를 자름). 축거 0.725 m 기준 경로에서 1 m 벗어났을 때:
+  LAD 2.0 m -> 조향 0.348 rad (선회 반지름  2.0 m)
+  LAD 5.0 m -> 조향 0.058 rad (선회 반지름 12.5 m)
+  LAD 7.0 m -> 조향 0.030 rad (선회 반지름 24.5 m)
+
+경과:
+  원래     2.0 / 2.7 / 3.5 / 6.0 / 7.0
+    저속 LAD 2.0 m 에서 비례구간이 16도뿐이라 GPS heading 노이즈(±30도)에
+    좌우 풀락으로 튕겼다. 3.5 / 4.0 으로 올려 해결.
+  사용자 조정  7.0 / 5.0 / 3.5 / 6.0 / 7.0
+    출발 튐을 줄이려고 저속만 올렸는데 6 km/h 밴드가 3.5 로 남아 V자가 됐다.
+    가속 중 경계에서 조향 게인이 1.43배 급증 후 0.58배 급감.
+    실제 피해: 2026-09-14 23:05 주행에서 E-stop 으로 감속하다 속도가 2 km/h
+    아래로 떨어지는 순간 LAD 가 5.0 -> 7.0 으로 올라가 게인이 0.71배가 됐고,
+    경로 복귀해야 할 시점에 오히려 힘이 빠져 오차가 1.89 -> 6.97 m 로 벌어졌다.
+  현재     5.0 / 5.0 / 5.5 / 6.0 / 7.0  (단조 증가)
+    경계 게인 변화 최대 0.92배. 계단이 사실상 없다.
+    비례구간 44.3 / 44.3 / 50.3 / 57.0 / 78.1 도.
+
+주의: LAD 는 직진 안정성과 코너 추종이 정면으로 충돌하는 파라미터다.
+  직진을 위해 키우면 코너를 못 돈다. 경로의 target_speed 열로 구간별 속도를
+  낮추면 그 구간만 LAD 가 작아지므로 서로 안 부딪힌다.
+
+[코너 이탈 - 09-15 에 해결됨]
+
+  ※ 아래 내용은 LAD 6~7 m 일 때의 기록이다. 09-15 새벽에 고속 LAD 를
+    4.5 m 로 낮춰 해결했다. 같은 코너에서 오차 1.45 m -> 0.56~0.70 m.
+    상세는 t870_progress_2026-09-15.txt [LAD 최종값] 참조.
+
+[미해결 당시 기록 - 코너 이탈]
+
+waypoint 617~634 (반지름 7.6 m, 좌 86도 코너) 에서 6회 연속 이탈했다.
+직전까지는 오차 0.5~0.7 m 로 잘 따라가다가 코너 진입부터 벌어진다.
+LAD 6.0~7.0 m 가 코너 반지름 7.6 m 에 근접해 목표점이 코너를 가로질러
+반대편 직선 위에 찍히고, 차는 덜 꺾어 바깥으로 벌어진다.
+alpha 가 90도를 넘으면 atan2(2L sin alpha, d) 의 sin 이 감소해 조향이
+오히려 줄어들어 복구 불가 상태가 된다.
+
+해결안 (미적용):
+  (a) 1.csv 의 waypoint 610~645 target_speed 를 1.1 m/s 로 낮춘다.
+      그 구간만 LAD 가 4~5 m 로 줄어 코너를 문다. 직진 구간은 그대로.
+      곡률을 계산해 급한 구간을 자동으로 찾는 방식이면 다른 코너도 처리된다.
+  (b) 고속 LAD 자체를 4.5 m 로 줄인다. 전 구간 영향이라 직진이 나빠질 수 있다.
+
+[분석 시 반드시 먼저 할 것]
+
+tracking CSV 는 조종기가 MANUAL 이어도 follower 가 계속 기록한다.
+state 가 TRACKING 이라고 해서 차가 ROS 제어로 움직인 것이 아니다.
+오늘 이 함정에 세 번 빠져 MANUAL 주행을 자율주행 성능으로 오판했다.
+
+판별: 조향 명령 대비 실제 선회량을 부호 포함해 비교한다.
+  dheading/dt = -v * tan(delta) / L      (positive_right=True 이므로 음부호)
+  2초 창으로 나눠 (실제 방위변화 / 예상 방위변화) 의 중앙값을 본다.
+  0.4 이상이면 AUTO, 0 근처면 MANUAL 이거나 조향이 바퀴에 안 간 것.
+  |조향| 누적과 순 회전량을 비교하면 좌우 보정이 상쇄되어 AUTO 도 MANUAL 로
+  잘못 나온다. 반드시 부호를 맞출 것.
+
+조향이 안 간 또 다른 원인: MAVROS 가 꺼져 있으면 /mavros/rc/override 가 갈
+곳이 없어 조향이 죽고, /mavros/imu/data 도 끊겨 heading 까지 없어진다.
+2026-09-14 22:52 주행 두 건이 이 경우였다.
+
+AUTO 구간을 확실히 알려면 주행 중 다음을 띄워 파일로 남긴다:
+  ros2 topic echo /t870/remote_rc_mode | grep --line-buffered "^data:" | \
+    while read -r l; do [ "$l" != "$p" ] && echo "$(date +%H:%M:%S) $l" \
+    | tee -a /tmp/rc_mode_log.txt; p="$l"; done
+  (같은 방식으로 /t870/emergency_stop 도 /tmp/estop_log.txt 에)
+
+[주의]
+- 터미널 2의 topic echo는 모니터링만 하며 GPS 추종을 시작/초기화하지 않음.
+- USB 장치 경로(/dev/serial/by-id/...)가 실제 연결 상태와 일치해야 함.
+- 주행 중 GPS가 STOP_ROUTE_ERROR로 바뀌는지 tracking CSV와 터미널 로그를 확인.
+- RC 상태는 오직 Arduino USB 시리얼로만 ROS에 들어옴. arduino_drive_node가
+  포트 연결에 실패하면 /t870/remote_auto가 오지 않아 타임아웃으로 모드가
+  STOP에 머무름. AUTO로 올려도 안 움직이면 여기부터 확인할 것.
+- AUTO 전환이 곧 출발임. 실차 첫 시험은 바퀴를 띄우거나 넓은 공터에서,
+  조종기 MANUAL로 즉시 회수 가능한 상태로 진행할 것.
+
+[이어지는 작업]
+자정 이후 작업은 t870_progress_2026-09-15.txt 에 있다.
+  출발 시 조향 튐 해결(IMU 76도 오차, route_tangent 21도 오차)
+  LAD 최종값 5.0/5.0/5.0/4.8/4.5
+  GPS fix 품질 전달 + minimum_fix_status
+  LiDAR 분리 인자 lidar_safety_enabled
+  노드 좀비(8080 포트) 원인과 t870_cleanup.sh
+  새 경로 path4.csv
+  미해결: RTK 보정이 주행 중 30~40초씩 끊김

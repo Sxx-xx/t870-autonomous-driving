@@ -1,0 +1,11 @@
+int32 seq
+float64 gps_x
+float64 gps_y
+float64 gps_z
+float64 velocity
+float64 steer_angle
+int32 waypoint_size
+int32 cur_waypoint
+int32 angle_index
+float64 way_x
+float64 way_y

@@ -1,0 +1,62 @@
+from setuptools import setup, find_packages
+import os
+from glob import glob
+
+package_name = 't870_control'
+
+setup(
+    name=package_name,
+    version='0.1.0',
+    packages=find_packages(exclude=['test']),
+    data_files=[
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name] if os.path.exists('resource/' + package_name) else []),
+        ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'log'),
+            ['t870_control/log/lanenet_ENet_Focal_epoch100_batchsize8.pth']),
+        (os.path.join('share', package_name, 'path'), glob('path/*.txt')),
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
+    ],
+    install_requires=['setuptools', 'pyserial'],
+    zip_safe=True,
+    maintainer='eunjae',
+    maintainer_email='eunjae@todo.todo',
+    description='Henes Broon T870 control package using Pixhawk and ArduRover',
+    license='Apache-2.0',
+    tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+            'pixhawk_vehicle_interface_node = t870_control.pixhawk_vehicle_interface_node:main',
+            'arduino_drive_node = t870_control.arduino_drive_node:main',
+            'remote_mode_control_node = t870_control.remote_mode_control_node:main',
+            't870_planner_main = t870_control.t870_planner_main:main',
+            't870_status = t870_control.t870_status:main',
+            'lane_camera_preview = t870_control.lane_camera_preview:main',
+            'smc2000_gps_node = t870_control.smc2000_gps_node:main',
+            'gps_path_recorder = t870_control.gps_path_recorder_node:main',
+            'gps_path_follower = t870_control.gps_path_follower_node:main',
+            'cone_park_selector = t870_control.cone_park_selector_node:main',
+            'rrt_avoidance_mux = t870_control.rrt_avoidance_mux_node:main',
+            'mission_zone_manager_node = t870_control.mission_zone_manager_node:main',
+            'mission_mux_node = t870_control.mission_mux_node:main',
+            'obstacle_avoidance_node = t870_control.obstacle_avoidance_node:main',
+            'emergency_stop_node = t870_control.emergency_stop_node:main',
+            'parallel_park_node = t870_control.parallel_park_node:main',
+            't_park_node = t870_control.t_park_node:main',
+            'traffic_light_node = t870_control.traffic_light_node:main',
+            'lane_signal_node = t870_control.lane_signal_node:main',
+            'parking_slot_selector = t870_control.parking_slot_selector_node:main',
+            't_path_selector = t870_control.t_path_selector_node:main',
+            'lidar_sector_filter = t870_control.lidar_sector_filter_node:main',
+            'competition_mission_manager = t870_control.competition_mission_manager_node:main',
+            'webcam_pub_node = t870_control.webcam_pub_node:main',
+            'traffic_red_detector = t870_control.traffic_red_detector_node:main',
+            'finish_red_detector = t870_control.finish_red_detector_node:main',
+            'ox_signal_detector = t870_control.ox_signal_detector_node:main',
+            'traffic_light_camera = t870_control.traffic_light_camera_node:main',
+            'traffic_speed_test = t870_control.traffic_speed_test_node:main',
+        ],
+    },
+)

@@ -1,0 +1,6 @@
+<launch>
+        <!-- args = "(추종할 경로 이름)" -->
+	<node pkg="erp42_track" type="erp42_track.py" name="erp42_track"/>
+	<node pkg="erp42_track" type="ERP42_status1.py" name="erp42_status" output="screen" />
+
+</launch>

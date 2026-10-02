@@ -1,0 +1,1 @@
+index,ros_time_sec,latitude,longitude,altitude_m,utm_easting_m,utm_northing_m,utm_zone,fix_status,covariance_x_m2,covariance_y_m2,target_speed

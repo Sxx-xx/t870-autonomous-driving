@@ -1,0 +1,318 @@
+T870 GPS Pure Pursuit 작업 메모 (2026-09-15 새벽)
+
+09-14 작업(조향 게인 보정, 조종기 arming, heading 폴백)은
+t870_progress_2026-09-14.txt 에 있다. 이 문서는 자정 이후 이어진 작업이다.
+
+
+[결론부터]
+
+경로 추종 자체는 해결됐다. RTK 가 살아 있는 구간의 실측은 이렇다.
+  완만 구간   경로오차 0.48 ~ 0.70 m
+  코너        경로오차 0.56 ~ 0.70 m  (반지름 6.5 ~ 9.8 m)
+  최고속도    9.0 km/h (2.50 m/s)
+
+남은 문제는 하나, RTK 보정이 끊기는 것이다. 이건 차량/회선 쪽 문제로
+소프트웨어에서 더 할 수 있는 것이 없다. 아래 [미해결] 참조.
+
+
+[출발 시 조향이 확 꺾이던 문제 - 해결]
+
+증상: AUTO 로 올리자마자 우측으로 크게 꺾고 경로를 이탈. 반복 재현.
+
+원인 1 - IMU heading 이 76도 틀렸다.
+  09-14 에 corrected_imu 가지를 열면서 MAVROS 의 /mavros/imu/data yaw 가
+  ENU 절대방위이므로 imu_yaw_offset_rad = 0.0 이 맞다고 가정했다.
+  실측은 달랐다. 정지 상태에서 corrected_imu 가 -3.09 rad 을 말했는데
+  차가 움직이자 gps_course 는 1.81 rad 이었다. 76도 차이.
+  그 heading 으로 alpha 를 계산하니 -30도가 나와 우측으로 꺾었고,
+  GPS course 가 들어오는 순간 +53도로 뒤집혀 좌측 풀락으로 튀었다.
+
+원인 2 - route_tangent 도 21도 틀렸다.
+  IMU 를 끈 뒤에도 같은 증상이 남았다. route_tangent 는 "차가 경로 방향을
+  향한다"는 가정인데, 실측에서 그 가정이 21도 틀렸다.
+  route_tangent 2.09 rad vs 실제 heading 1.72 rad.
+  그 21도 때문에 alpha 가 -25도로 계산되어 우측으로 꺾었다. 실제 heading
+  으로 계산하면 alpha 는 +1.8도, 즉 직진이 맞았다.
+
+수정:
+  use_imu_heading            False   IMU heading 사용 안 함
+  route_tangent_max_steer_rad 0.0    추측 heading 으로는 꺾지 않는다
+  startup_straight_sec       3.0     AUTO 전환 후 3초간 조향 0 고정
+  minimum_course_speed_mps   0.10    course 확보를 앞당김 (0.30 -> 0.18 -> 0.10)
+
+  heading 을 모르는 동안은 완전히 직진으로만 기어간다. 추측값으로 꺾을
+  권한 자체를 없앴다. 실측 확인: route_tangent 구간 조향이 정확히 0.000.
+
+주의: 그래서 출발 시 차를 경로 위에 경로 방향으로 세우는 것이 중요해졌다.
+  틀어져 있으면 course 가 잡힐 때까지 그 방향으로 직진한다.
+
+
+[LAD 최종값]
+
+  0~2 km/h   5.0 m
+  2~4 km/h   5.0 m
+  4~6 km/h   5.0 m
+  6~8 km/h   4.8 m
+  8 km/h~    4.5 m
+
+근거: LAD 7.0 으로 돌렸을 때 반지름 5.5 m 코너에서 오차가 1.45~1.47 m 로
+  벌어졌다. LAD 가 코너 반지름보다 크면 목표점이 코너를 가로질러 찍혀
+  차가 덜 꺾고 바깥으로 벌어진다.
+  4.5 로 낮춘 뒤 같은 코너에서 0.56~0.70 m. 절반 이하로 줄었다.
+  비례 구간은 39~44도로 여전히 충분하다(30도 이상 권장).
+
+시도했다가 되돌린 값들:
+  전 구간 7.0        직진에는 최선이나 코너를 전부 자른다
+  7.0/5.0/3.5/6.0/7.0 (V자)  4~6 km/h 밴드만 3.5 로 남아 계단이 생겼다.
+    가속 중 경계에서 게인이 1.43배 급증 후 0.58배 급감.
+    실제 피해: 감속으로 2 km/h 아래로 떨어지는 순간 LAD 가 5.0 -> 7.0 으로
+    올라가 복귀해야 할 시점에 게인이 약해졌고, 오차가 1.89 -> 6.97 m 로
+    벌어졌다. LAD 밴드는 반드시 단조 증가로 둘 것.
+
+
+[GPS fix 품질 전달 - 신규]
+
+smc2000_gps_node 가 GGA 품질을 전부 STATUS_FIX 하나로 뭉뚱그리고 있었다.
+RTK 와 7 m 오차의 DGPS 를 구분할 방법이 없었다.
+
+  GGA 품질 -> NavSatStatus
+    0 측위불가 -> STATUS_NO_FIX   (-1)
+    1 단독측위 -> STATUS_FIX      ( 0)
+    2 DGPS     -> STATUS_SBAS_FIX ( 1)
+    4 RTK Fix  -> STATUS_GBAS_FIX ( 2)
+    5 RTK Float-> STATUS_GBAS_FIX ( 2)
+
+follower 에 minimum_fix_status 추가 (기본 2 = RTK). 그 미만은 위치를
+받아들이지 않는다. 7 m 틀린 위치로 조향을 계산하느니 멈추는 쪽이 낫다.
+launch 인자로도 노출했다: minimum_fix_status:=1 이면 DGPS 까지 허용.
+
+품질이 바뀌면 로그도 남는다:
+  GPS fix quality RTK float -> DGPS. A drop out of RTK steps the reported
+  position by several metres.
+
+
+[LiDAR 분리 - 신규]
+
+launch 인자 lidar_safety_enabled (기본 true). false 로 주면
+  require_lidar            true -> false
+  estop_distance_m         0.50 -> 0.01
+  dynamic_stop_distance_m  2.00 -> 0.01
+이 되어 LiDAR 가 주행에 전혀 개입하지 않는다. GPS 추종만 따로 측정할 때 쓴다.
+
+주의: 이 상태에서는 장애물 앞에서 전혀 멈추지 않는다. 빈 공터에서
+조종기를 손에 들고 할 것. MANUAL 로 내리는 것이 유일한 정지 수단이다.
+
+참고 - 현재 구조에서 "LiDAR 로 회피"는 구현돼 있으나 검증되지 않았다.
+  gps_path_follower (GPS 만) --/cmd_vel/gps--+
+  MaRRTPathPlanNode (/scan) --/waypoints----+-> rrt_avoidance_mux -> gps_safe
+  t870_tracker --/cmd_vel/rrt---------------+
+  rrt_avoidance_mux 는 RRT 경로가 0.20 m 이상 옆으로 비키면 그쪽으로
+  전환하고 0.10 m 이하로 돌아오면 GPS 로 복귀한다.
+  다만 MaRRTPathPlanNode 가 실내 벤치 설정이다:
+    planning_distance 2.0 m, obstacle_max_range 2.5 m,
+    indoor_lidar_mode True, world_frame 'laser'
+  2 m 앞만 보므로 9 km/h 에서는 회피 기동이 불가능하다. 실주행에 쓰려면
+  8~10 m 로 늘리고 프레임을 odom 으로 바꿔야 한다.
+  현재 실제 동작하는 장애물 대응은 회피가 아니라 E-stop(급정지)이다.
+
+
+[노드가 자꾸 죽던 원인 - 해결]
+
+증상: launch 를 띄워도 AUTO 가 안 되고, 노드 목록이 3개뿐이거나
+  arduino_drive_node 가 없다. 하루 종일 반복됐다.
+
+원인: remote_mode_control_node 가 웹 제어용 8080 포트를 연다. launch 를
+  Ctrl+C 로 끄거나 터미널 창을 닫으면 이 노드만 고아로 살아남아 8080 을
+  계속 물고 있고, 다음 launch 의 새 인스턴스가
+    OSError: [Errno 98] Address already in use
+  로 1.5초 만에 죽는다. 이 노드가 /cmd_vel 을 발행하므로 없으면 차가
+  절대 움직이지 않는다. 더 나쁜 것은 좀비가 계속 STOP 을 발행해서
+  현재 arduino_drive_node 와 연결도 안 된 채 모드를 잠근다는 점이다.
+
+왜 고아가 되나: node.stop() 은 KeyboardInterrupt 를 받아야 실행된다.
+  터미널 창을 닫으면 SIGINT 가 아니라 SIGHUP 이 가고, ros2 launch 가 그걸
+  자식에게 정리 신호로 전달하지 못하면 자식이 고아로 남는다.
+  launch 부모만 kill 해도 같다. kill -9 는 종료 핸들러를 아예 못 돌린다.
+
+대책: t870_cleanup.sh 를 만들었다.
+  bash t870_cleanup.sh
+  SIGINT 로 정상 종료를 먼저 시도하고 5초 안에 안 죽으면 SIGKILL.
+  그 다음 8080 포트와 시리얼 포트 4개를 전부 확인해 보여준다.
+  MAVROS 는 건드리지 않는다.
+
+종료 요령: 터미널 창을 바로 닫지 말고 Ctrl+C 후 process finished 메시지가
+  다 올라올 때까지 2~3초 기다릴 것. 다시 띄우기 전 cleanup 스크립트 실행.
+
+
+[Arduino 펌웨어]
+
+AUTO_KP 16.0 -> 20.0 (MANUAL 은 22.0 그대로). 업로드 완료.
+  arduino-cli 없이 avr-g++ 7.3.0 + avrdude 8.0.0 으로 직접 빌드/업로드했다.
+  Flash 39.6%, RAM 50.3%.
+
+주의: 최고속도는 Kp 로 안 올라간다. control = ff + Kp*err + Ki*I 이고
+  상한이 200 인데, 10 km/h 에서 ff 만 185 를 요구해 여유가 15 뿐이다.
+  ff = 6.4 + 17.9 * 목표속도 인데 이 계수는 PWM 10->0.20 km/h,
+  PWM 15->0.48 km/h 두 점을 20배 외삽한 값이라 신뢰도가 낮다.
+  속도를 실제로 올리려면 5~9 km/h 구간에서 FF 를 재캘리브레이션해야 한다.
+
+
+[경로 path4]
+
+gps_recordings/path4.csv  (걸어서 기록)
+  177점, 총 길이 207 m, 순환 코스(시종점 4.2 m)
+  점 간격 중앙값 1.19 m, 최대 1.34 m   공백 없음
+  fix_status RTK 177/177 = 100%
+  target_speed 2.778 전 구간
+
+곡률: 최소 반지름 4.0 m (차량 한계 3.58 m 안쪽이라 돌 수는 있다)
+  wp 24~33  첫 코너   반지름 17.0 -> 4.7 -> 16.9
+  wp 34~35  완화      반지름 29.9, 27.7   ← 단 2 m
+  wp 36~47  둘째 코너 반지름 19.4 -> 5.7 -> 11.8
+  연속 우코너이고 사이 직선이 2 m 뿐이다.
+
+이전 경로 path3 는 버렸다. RTK 45%, 45 m 점 공백, 반지름 1.3 m 코너
+(차량 최소 3.58 m 라 물리적으로 불가)가 있었다. 단독측위로 튄 좌표로 보인다.
+
+기록 시 주의:
+  path_name 은 문자열이다. path_name:=3 으로 주면 INTEGER 로 해석돼
+  기록기가 죽는다. path3 처럼 문자를 섞거나 path_name:="'3'" 로 줄 것.
+  target_speed 를 반드시 지정할 것. 기본 1.0 으로 기록하면 follower 가
+  그 값을 속도 상한으로 쓰므로 그 경로는 영원히 1.0 m/s 를 못 넘는다.
+    command.linear.x = min(recorded_speed, self.target_speed)
+
+
+[미해결 - RTK 보정 끊김]  ← 현재 유일한 블로커
+
+주행 중 RTK 가 30~40초씩 끊긴다. follower 는 minimum_fix_status=2 라
+그 동안 위치를 못 받아 정지하고, 차는 계속 굴러 경로를 이탈한다.
+
+  02:27:12  끊김 없음
+  02:28:33  28.8초  wp 175   전체 242초 중 12%
+  02:36:35  30.5초  wp  27   전체  85초 중 36%
+  02:42:19  39.6초  wp  27   전체 110초 중 36%
+
+끊기는 순간의 상태는 멀쩡하다: wp 27, 오차 0.46~0.51 m, TRACKING.
+급코너(반지름 5.3 m, 우회전) 한복판이다.
+
+조사한 것:
+  - 정지 상태에서는 60초간 RTK Float 98% / Fix 2%, 보정 age 1.3~3.8초,
+    위치 산포 0.17 m, 점프 0회. 완벽하게 안정적이다.
+  - 걸어서 path4 를 딸 때는 같은 장소에서 RTK 100% 였다.
+  - 끊길 때 품질이 RTK Float(5) -> 단독측위(1) 로 DGPS 를 건너뛴다.
+    위성은 12개로 유지되고 HDOP 는 0.74 -> 0.84 로 거의 그대로다.
+    즉 하늘이 가려진 것이 아니라 보정 데이터만 안 들어온다.
+  - 노트북에 NTRIP 클라이언트 프로세스가 없고 포트 2101 연결도 없다.
+    휴대폰 핫스팟(172.20.10.0/28)에도 수신기가 없다.
+    GGA 에는 기지국 ID 1076 이 찍힌다. 보정 경로를 아직 특정하지 못했다.
+
+정리하면 차로 달릴 때만, 특정 지점에서, 30~40초씩 끊긴다.
+걸을 때는 안 끊긴다. 차량 진동이나 커넥터 접촉이 의심되지만 미확인이다.
+
+다음에 확인할 것:
+  - USB 커넥터(수신기/노트북 양쪽) 고정 상태
+  - 안테나 고정 상태, 우회전 시 차체 간섭 여부
+  - rtk_walk_check.py 로 끊기는 지점의 좌표를 모아 분포 확인
+      python3 rtk_walk_check.py 300
+    한곳에 몰리면 그 자리의 전파 장애, 흩어지면 접촉 문제다.
+
+임시 회피: minimum_fix_status:=1 로 주면 DGPS 로도 달린다. 다만 path4 가
+RTK 로 기록된 경로라 기준이 달라져 수 m 계통 오차가 생긴다.
+
+
+[현재 실행 명령]
+
+터미널 1 - MAVROS (overlay 환경 unset 필수, 상세는 09-11 메모 3절)
+터미널 2 - 본 구동:
+
+cd /home/sxx/Desktop/colcon_ws./colcon_ws/colcon_ws && \
+source /opt/ros/jazzy/setup.bash && source install_t870/setup.bash && \
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1 \
+  RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_LOG_DIR=/tmp/ros_t870_logs && \
+ros2 launch t870_control t870_lane_autonomy.launch.py \
+  lidar_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_...-if00-port0 \
+  arduino_serial_port:=/dev/serial/by-id/usb-Arduino_...-if00 \
+  record_gps_path:=false enable_localization:=true enable_gps_follower:=true \
+  gps_follow_path_file:=<절대경로>/gps_recordings/path4.csv \
+  require_operator_heartbeat:=false lidar_safety_enabled:=false
+
+띄우기 전 bash t870_cleanup.sh 를 반드시 실행할 것.
+
+
+[현재 파라미터 요약]
+
+  축거                        0.725 m
+  풀락 조향각                 좌 15.55도 / 우 15.30도 (실측)
+  max_steer_angle_rad         0.2670
+  조향 PWM 스팬               1100 / 1500 / 1900
+  gps_follow_max_steer_rad    0.20 (실제 11.46도, 풀락의 75%)
+  조향 게인                   1.00x
+  POT_AT_CENTER               543
+  AUTO_KP / AUTO_KI           20.0 / 5.0
+  LAD                         5.0 / 5.0 / 5.0 / 4.8 / 4.5
+  minimum_course_speed_mps    0.10
+  startup_straight_sec        3.0
+  route_tangent_max_steer_rad 0.0
+  use_imu_heading             false
+  minimum_fix_status          2 (RTK)
+  maximum_route_error_m       10.0
+  목표 속도                   2.7778 m/s (10 km/h), 실측 최고 9.0 km/h
+
+
+[분석 시 반드시 먼저 할 것]  (09-14 메모에서 이어짐)
+
+tracking CSV 는 조종기가 MANUAL 이어도 follower 가 계속 기록한다.
+state 가 TRACKING 이라고 해서 차가 ROS 제어로 움직인 것이 아니다.
+
+판별: 조향 명령 대비 실제 선회량을 부호 포함해 비교한다.
+  dheading/dt = -v * tan(delta) / L
+  2초 창으로 (실제 방위변화 / 예상 방위변화) 중앙값을 본다.
+  0.4 이상이면 AUTO, 0 근처면 MANUAL 이거나 조향이 바퀴에 안 갔다.
+
+그리고 tracking CSV 의 행이 끊긴 구간을 먼저 찾을 것.
+  stop() 은 tracking 행을 쓰지 않는다. 따라서 elapsed_sec 이 크게 점프한
+  구간은 follower 가 멈춘 구간이고, 대부분 GPS fix 가 stale 해진 것이다.
+  이번 RTK 끊김도 이 방법으로 찾았다.
+
+[22:33 주행 분석 - LAD 확정]
+gps_tracking_20260915_223332.csv  375행 20초  wp 56->68  RTK 끊김 없음
+최대 6.3 km/h, 오차 시작 0.78 최소 0.31 최대 1.49(wp 61, R=3.4 m 코너)
+
+사용자 판단(LAD 이슈)이 맞다. 근거:
+  wp 61 에서 필요조향 0.210 rad, 실제 지령 0.131 rad.
+  조향한계 0.20 에 닿지도 않았다. 0.07 rad 을 안 쓰고 남겼다.
+  한계가 묶은 게 아니라 컨트롤러가 덜 요구한 것 = LAD 가 긴 것.
+  기록 조향과 재현식이 소수점 셋째 자리까지 일치하므로 모델은 맞다.
+
+경로 위(오차 0)에서 LAD 별 필요조향 달성률, 급코너(R<6 m) 20곳:
+  LAD 5.0 m  평균 70%
+  LAD 4.0 m  평균 80%
+  LAD 3.5 m  평균 83%
+  LAD 3.0 m  평균 94%
+LAD 표가 5.0/5.0/5.0/4.8/4.5 로 거의 평평했다. 3~4 km/h 로 도는 코너에
+9 km/h 용 전방주시거리를 쓰고 있었다.
+
+바꾼 값 (t870_lane_autonomy.launch.py 기본값)
+  gps_lad_2kmh_m   5.0 -> 3.5
+  gps_lad_4kmh_m   5.0 -> 3.5
+  gps_lad_6kmh_m   5.0 -> 4.0
+  gps_lad_8kmh_m   4.8 -> 4.5
+  gps_lad_10kmh_m  4.5 (유지)
+  gps_follow_max_steer_rad  0.20 -> 0.24   최소 반지름 3.58 -> 2.96 m
+
+한계도 같이 올린 이유: LAD 만 줄이면 idx 30/31/41 에서 0.21~0.30 rad 을
+요구해 곧바로 한계에 물린다. 병목이 LAD 에서 조향한계로 옮겨갈 뿐이다.
+0.24 는 실측 풀락 0.267 의 90% 라 여유가 있고 아두이노 쪽
+max_steer_angle_rad=0.2670 스케일을 그대로 통과한다.
+
+다음 로그에서 볼 것
+  코너에서 조향이 ±0.24 에 붙으면(포화) -> 경로가 차보다 급한 것.
+    idx 31(R=2.77 m)만 0.24 로도 못 돈다. QGIS 에서 그 점만 펴면 된다.
+  포화 없이 오차가 다시 벌어지면 -> LAD 를 3.0 까지 더 줄인다.
+  짧은 LAD 부작용(피쉬테일)은 직진에서 조향 부호가 1초 안에 뒤집히는지로 본다.
+    점 간격이 1.13 m 라 LAD 2.5 아래로는 목표점이 한 점씩 튀어 떨림이 생긴다.
+
+
+다음 기록: t870_progress_2026-09-16.txt
+  RTK 끊김(동적 모델 Stationary)과 heading 폴백(RMC 0.02 Hz)이
+  모두 해결됐다. 10 km/h 전 코스 완주.

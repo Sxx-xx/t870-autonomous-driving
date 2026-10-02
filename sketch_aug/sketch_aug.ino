@@ -1,0 +1,1680 @@
+// ============================================================
+// Arduino UNO - T870
+// 조향 위치 제어 + 구동 속도 PI 제어
+//
+// D2  : 구동 엔코더 A상 (INT0)
+// D3  : 구동 엔코더 B상
+// D7  : 조향 DIR
+// D8  : Pixhawk PWM 입력   (PCINT0)
+// D9  : 조향 PWM           (Timer1)
+// D10 : 구동 PWM           (Timer1)
+// D11 : 구동 DIR
+// D12 : 모드 스위치 입력   (PCINT4, 미구현)
+// A0  : 조향 포텐셔미터
+// A1  : 배터리 전압 감시   (미구현)
+//
+// 실차 배선 기준 (2026-08-26 확인)
+//   구동 MDD20A M1A : 노란색
+//   구동 MDD20A M1B : 파란색
+//   조향 MD20A  MA  : 초록색 (우회전)
+//   조향 MD20A  MB  : 흰색   (좌회전)
+//   구동 엔코더 A상 : 초록색 -> D2
+//   구동 엔코더 B상 : 파란색 -> D3
+//   위 엔코더 배선에서 차가 전진하면 카운트가 양수로 증가한다.
+//
+// ------------------------------------------------------------
+// 시리얼 명령 (115200bps, 줄 끝 = Newline 으로 설정할 것)
+//
+//   1.5    목표 속도 1.5 km/h (전진)
+//  -1.0    목표 속도 1.0 km/h (후진)
+//   0      정지
+//   p90    구동 개루프. PI 우회하고 duty 90 직접 인가 (10.3 FF 실측용)
+//   s60    조향 개루프. POT 값이 커지는 방향으로 duty 60
+//   s-60   조향 개루프. POT 값이 작아지는 방향으로 duty 60
+//   s0     조향 개루프 해제 (중앙 복귀로 돌아감)
+//   b      명령 워치독 on/off 토글 (벤치 테스트용)
+//   r      폴트/스톨 래치 해제
+//
+// ------------------------------------------------------------
+// 확인이 끝나지 않은 값 두 개. 아래 [확인필요] 표시 참조.
+//   1) COUNTS_PER_REV   - 바퀴 10회전 실측으로 확정
+//   2) 조향 좌우 라벨   - 핸들 좌측 끝에서 POT 값 확인
+// ============================================================
+
+#include <Arduino.h>
+#include <Wire.h>
+
+
+// ============================================================
+// 핀 설정
+// ============================================================
+
+const byte ENCODER_A   = 2;
+const byte ENCODER_B   = 3;
+
+const byte STEER_DIR   = 7;
+const byte PIXHAWK_PWM = 8;
+const byte STEER_PWM   = 9;
+
+const byte DRIVE_PWM   = 10;
+const byte DRIVE_DIR   = 11;
+
+const byte STEER_POT   = A0;
+
+
+// ============================================================
+// 보조 Arduino RC 수신기 (I2C)
+//
+// 보조 보드가 일반 PWM 리시버 D4/D5/D6을 읽어 주소 0x12로 전달한다.
+// MANUAL: 보조 보드의 조향/스로틀 명령 사용
+// AUTO  : 기존 Pixhawk 조향 + USB 시리얼 속도 명령 사용
+// 통신/리시버/모드 신호가 끊기면 양쪽 모터 출력을 정지한다.
+// ============================================================
+
+const byte REMOTE_I2C_ADDRESS = 0x12;
+const byte REMOTE_REPORT_MAGIC = 0xB7;
+const byte REMOTE_REPORT_VERSION = 1;
+const byte REMOTE_FLAG_AUTO = 0x01;
+const byte REMOTE_FLAG_MODE_VALID = 0x02;
+const unsigned long REMOTE_POLL_MS = 20;
+// 일반 RC 펄스/I2C 전송의 일시적인 지연은 허용한다. 마지막 정상 보고서가
+// 이 시간보다 오래 갱신되지 않을 때만 실제 수신기 단절로 판정한다.
+const unsigned long REMOTE_TIMEOUT_MS = 1000;
+const unsigned long MODE_CHANGE_STOP_MS = 1000;
+const int MANUAL_REARM_DEADBAND = 5;
+
+struct __attribute__((packed)) RemoteReport
+{
+  byte magic;
+  byte version;
+  byte sequence;
+  int8_t throttleCommand;
+  int8_t steeringCommand;
+  byte flags;
+  byte connected;
+  uint16_t throttleRaw;
+  uint16_t steeringRaw;
+  byte checksum;
+};
+
+bool remoteControlValid = false;
+bool remoteAutoMode = false;
+int remoteThrottleCommand = 0;
+int remoteSteeringCommand = 0;
+uint16_t remoteThrottleRaw = 0;
+uint16_t remoteSteeringRaw = 0;
+byte remoteSequence = 0;
+bool remoteSequenceSeen = false;
+unsigned long lastRemotePollMs = 0;
+unsigned long lastRemoteUpdateMs = 0;
+unsigned long modeChangeStopUntilMs = 0;
+bool manualNeutralRequired = true;
+bool receiverFailsafeActive = true;
+
+
+// ============================================================
+// Pixhawk 조향 PWM 입력
+//
+// FMU PWM OUT 1 = ArduPilot SERVO9 (Ground Steering, function 26)
+// 실측/설정 범위: 1100(좌) / 1500(중앙) / 1900(우)
+// 신호가 끊기면 조향모터를 즉시 정지한다.
+// ============================================================
+
+const unsigned int PIXHAWK_PWM_MIN_US    = 1100;
+const unsigned int PIXHAWK_PWM_CENTER_US = 1500;
+const unsigned int PIXHAWK_PWM_MAX_US    = 1900;
+const unsigned int PIXHAWK_PWM_VALID_MIN = 800;
+const unsigned int PIXHAWK_PWM_VALID_MAX = 2200;
+const unsigned long PIXHAWK_PWM_TIMEOUT_US = 150000UL;
+
+volatile unsigned long pixhawkRiseUs       = 0;
+volatile unsigned long pixhawkLastUpdateUs = 0;
+volatile unsigned int  pixhawkPulseUs       = 0;
+
+unsigned int currentPixhawkPwmUs = 0;
+int          currentSteerTarget  = 0;   // setup() 에서 POT_AT_CENTER 로 초기화
+bool         pixhawkPwmValid     = false;
+
+
+// ============================================================
+// 조향 캘리브레이션   (2026-08-20 실측, 아두이노 5V 급전)
+//
+//   좌측 끝            중앙              우측 끝
+//     32 ------------- 556 ------------ 1020
+//
+// [중요] 이 값들은 5V 급전 기준이다. 포텐셔미터 급전을 3.3V 등으로
+//        바꾸면 전부 무효가 된다. 스케일이 1.53배 달라진다.
+//
+// [확인완료] 실측 결과 POT 값은 좌회전할수록 작아지고,
+//            우회전할수록 커진다.
+// ============================================================
+
+// 2026-09-12 현재 배선/급전 상태에서 재측정한 값.
+const int POT_AT_RIGHT_LOCK = 1020;
+// [2026-09-14 GPS 직진 실측] 556 은 참중앙보다 13 counts 높아 상시 0.49도
+// 우타각이 걸려 있었다. 스틱 중립 MANUAL 로 방위 19도/188도 왕복 직진한 뒤
+// 궤적을 원 피팅한 결과 반지름 82.4 m / 111.0 m 로 양쪽 모두 우측으로 휘었다.
+// (반대 방향 주행에서 같은 쪽으로 휘므로 노면 경사가 아니라 조향 중앙 오차다.)
+const int POT_AT_CENTER     = 543;
+const int POT_AT_LEFT_LOCK  = 32;
+
+
+// 소프트 리밋. 좌우를 바꿔 넣어도 따라오도록 min/max 로 계산한다.
+const int POT_LOCK_MARGIN = 15;
+
+const int POT_SOFT_MIN =
+  ((POT_AT_RIGHT_LOCK < POT_AT_LEFT_LOCK)
+     ? POT_AT_RIGHT_LOCK : POT_AT_LEFT_LOCK) + POT_LOCK_MARGIN;
+
+const int POT_SOFT_MAX =
+  ((POT_AT_RIGHT_LOCK > POT_AT_LEFT_LOCK)
+     ? POT_AT_RIGHT_LOCK : POT_AT_LEFT_LOCK) - POT_LOCK_MARGIN;
+
+
+// 고장 판정
+//   단선 -> ADC 0 근처.  LEFT_LOCK(40) 과 구분된다.
+//   단락 -> ADC 1023.    RIGHT_LOCK(1020)이 ADC 상한에 매우 가까우므로
+//           소프트 리밋 1005에서 정지시켜 정상 제어 중 fault를 피한다.
+//           오검출이 나면 FAULT_HIGH 를 조금 올린다.
+const int  STEER_FAULT_LOW   = 20;
+// 현재 정상 우측 끝이 1020~1023까지 도달하므로 상단 ADC cannot be distinguished
+// from a 5 V short by ADC value alone. Outward motion is instead blocked by the
+// 1005 soft limit, while inward motion remains available for center recovery.
+const int  STEER_FAULT_HIGH  = 1023;
+const byte STEER_FAULT_COUNT = 5;      // 연속 5회만 인정 (스파이크 방지)
+
+
+// 스톨 판정
+// 실차에서 중앙 부근 정지마찰을 스톨로 오검출하는 현상이 반복되어
+// 현재는 비활성화한다. 센서 고장, 소프트 리밋, PWM 단절 보호는 유지된다.
+// 다시 사용하려면 true 로 변경한다.
+const bool          ENABLE_STEER_STALL = false;
+const int           STEER_STALL_DELTA = 5;
+const unsigned long STEER_STALL_MS    = 500;
+
+
+// 좌우 스팬. 부호를 그대로 둔다.
+// 나중에 Pixhawk PWM(1000~2000us) 매핑에 쓴다.
+//   us >= 1500 : target = CENTER + (us-1500) * SPAN_LEFT  / 500
+//   us <  1500 : target = CENTER - (1500-us) * SPAN_RIGHT / 500
+// 좌우를 바꿔 넣으면 부호가 뒤집혀 식이 그대로 성립한다.
+const int POT_SPAN_LEFT  = POT_AT_LEFT_LOCK - POT_AT_CENTER;    // -511
+const int POT_SPAN_RIGHT = POT_AT_CENTER - POT_AT_RIGHT_LOCK;   // -477
+
+
+// ============================================================
+// 조향 제어
+// ============================================================
+
+const int STEER_DEADBAND = 15;    // 5V 기준. 3.3V 때의 10 을 환산한 값
+
+// [주의] 예전 값(60 / 150)은 PWM 490Hz 시절에 잡은 것이다.
+//        Timer1 을 3.9kHz 로 올리면 전류가 펄스 사이에 끊기지 않고
+//        연속 도통되어 같은 duty 에서 토크가 더 나온다.
+//        옛 값을 그대로 쓰면 데드밴드를 넘는 순간 걷어차여
+//        중앙을 지나치고, 반대편에서 다시 걷어차이는
+//        리밋 사이클(좌우로 계속 튐)이 난다.
+//        's' 개루프 명령으로 실제 최소 구동 duty 를 찾아 다시 잡을 것.
+const int STEER_MIN_PWM = 45;     // 정지마찰 극복 최소 duty
+const int STEER_MAX_PWM = 100;    // 캘리브레이션 중 상한. 낮게 시작한다
+
+// 중앙에서 이 거리 안쪽이면 비례 제어, 바깥이면 MAX_PWM.
+// 150 은 좌우 스팬(447 / 506) 양쪽보다 작으므로 비례 구간이
+// 항상 양쪽 안에 들어온다. 그래서 좌우 비대칭이 문제가 되지 않는다.
+const int STEER_SLOW_RANGE = 150;
+
+
+// 조향 DIR
+//
+// 좌/우 라벨이 아니라 "POT 값이 올라가는 방향 / 내려가는 방향"으로
+// 정의한다. 이러면 좌우 라벨 확정 여부와 무관하게 루프가 성립한다.
+//
+// [2026-08-26 실차 확인]
+//   우회전 -> POT 값 증가, MD20A MA 버튼 방향
+//   좌회전 -> POT 값 감소, MD20A MB 버튼 방향
+// Cytron PWM/DIR 모드에서 LOW = MA 방향, HIGH = MB 방향이다.
+const byte STEER_DIR_POT_UP   = LOW;   // MA = 우회전
+const byte STEER_DIR_POT_DOWN = HIGH;  // MB = 좌회전
+
+
+// ============================================================
+// 구동 방향
+// ============================================================
+
+// 구동모터 배선: M1A = 노란색, M1B = 파란색.
+// [2026-08-27 실차 명령 시험]
+//   기존 LOW 전진 설정에서 +0.3 명령이 후진하고 -0.3 명령이 전진했다.
+//   실제 DIR 논리에 맞춰 HIGH=전진, LOW=후진으로 확정한다.
+const byte DRIVE_FORWARD_DIR = HIGH;
+const byte DRIVE_REVERSE_DIR = LOW;
+
+// 실차 확인: 엔코더 초록색(A상)->D2, 파란색(B상)->D3 배선에서
+// 전진할 때 카운트가 양수로 증가하므로 +1 이 맞다.
+// 엔코더 두 선을 바꾸면 부호도 반대로 바꿔야 한다.
+const int ENCODER_SIGN = 1;
+
+
+// ============================================================
+// 엔코더 / 바퀴
+//
+// [확인필요] COUNTS_PER_REV
+//   바퀴를 손으로 정확히 10회전 시키고 Count 누적값을 본다.
+//     1570 근처 -> 157 유지
+//      780 근처 -> ISR 이 엣지를 절반만 세고 있다. 78.5 로 수정
+//   이 값이 틀리면 속도 전체가 그 배수만큼 틀리고,
+//   거기서 뽑은 FF 계수도 같이 틀어진다. FF 실측보다 먼저 확정할 것.
+//
+// ISR 은 A상 CHANGE 다. 문서 5.2 의 157 이 CHANGE 기준으로
+// 측정된 값이라 맞춰 두었다. RISING 이면 절반만 센다.
+// ============================================================
+
+// [2026-08-27 실차 재측정] 바퀴 10회전 = 약 1498 counts.
+// 따라서 1498 / 10 = 149.8 counts/rev.
+const float COUNTS_PER_REV = 149.8;
+
+// [수정됨] 이전 코드는 0.27(지름)을 둘레로 쓰고 있었다.
+//          속도가 실제의 1/3.14 로 측정되어 차가 명령의 3.14배로
+//          달리는 상태였다.
+const float WHEEL_DIAMETER      = 0.27;                    // m
+const float WHEEL_CIRCUMFERENCE = WHEEL_DIAMETER * 3.14159;  // 0.848 m
+
+volatile long encoderCount = 0;
+
+long previousEncoderCount = 0;
+long lastCountDifference   = 0;
+
+
+// 저속 양자화 완화용 이동평균
+// 1 km/h 에서 100ms 당 5 counts뿐이라 +-1 count 가 크게 잡힌다.
+// 근본 해결은 4체배. 문서 12.4 항목 11.
+const byte SPEED_FILTER_N = 3;
+
+float speedBuffer[SPEED_FILTER_N] = {0.0, 0.0, 0.0};
+byte  speedBufferIndex = 0;
+
+
+// ============================================================
+// 속도 / PI
+// ============================================================
+
+const float MAX_SPEED_KMH = 10.0;
+
+float commandSpeedKmh = 0.0;        // 현재 선택된 AUTO/MANUAL 목표
+float serialCommandSpeedKmh = 0.0;  // AUTO에서 사용하는 USB 시리얼 목표
+float rampedSpeedKmh  = 0.0;        // 램프를 거친 실제 목표
+float actualSpeedKmh  = 0.0;        // 부호 있는 측정 속도
+
+// 속도 램프 (소프트 스타트). 문서 8절 / 14.4
+// [변경] 기존의 PWM 슬루(PWM_STEP_UP/DOWN)를 제거하고 속도 램프로
+//        바꿨다. PWM 슬루는 PI 가 요구한 출력을 못 내주게 막아
+//        적분만 부풀린다. 소프트 스타트는 목표를 부드럽게 옮기는
+//        쪽이 맞다.
+const float ACCEL_RATE = 0.5;       // km/h per sec
+const float DECEL_RATE = 0.7;
+
+// 주행 중 방향 반전 금지 임계. 문서 9.2(4)
+const float REVERSE_GUARD_KMH = 0.3;
+const float STOP_THRESHOLD_KMH = 0.05;
+
+// MANUAL 능동 제동: 주행 방향과 반대 스로틀이 들어오면 짧게 역토크를
+// 걸어 관성 정지보다 빠르게 감속한다. 한 번의 스틱 반전에는 한 번만
+// 동작하며, 정지/중립 확인 전에는 반복 펄스를 허용하지 않는다.
+const float MANUAL_BRAKE_TRIGGER_KMH = 0.4;
+const int MANUAL_BRAKE_PWM = 65;
+const unsigned long MANUAL_BRAKE_MS = 250;
+bool manualBrakeActive = false;
+bool manualBrakeLatched = false;
+unsigned long manualBrakeStartMs = 0;
+
+// AUTO 능동 제동. MANUAL 과 같은 원리다. 시리얼 목표가 지금 굴러가는
+// 방향과 반대로 들어오면 제한된 역토크를 짧게 건다. 다른 점은 한 번만
+// 치고 마는 것이 아니라 쉬는 시간을 두고 반복한다는 것이다. GPS 추종은
+// 스틱과 달리 목표를 계속 유지하므로, 한 번으로 못 세우면 영영 못 센다.
+// ON 250 ms / OFF 150 ms 로 끊어 걸어 평균 전류를 낮춘다.
+const float AUTO_BRAKE_TRIGGER_KMH = 0.4;
+const int AUTO_BRAKE_PWM = 65;
+const unsigned long AUTO_BRAKE_MS = 250;
+const unsigned long AUTO_BRAKE_GAP_MS = 150;
+bool autoBrakeActive = false;
+unsigned long autoBrakeStartMs = 0;
+unsigned long autoBrakeRestUntilMs = 0;
+
+// ------------------------------------------------------------
+// 미션 홀드 (경사 밀림 방지)
+//
+// 이 차에는 브레이크가 없다. PWM 0 은 관성주행(coast)이라 오르막에서
+// 목표 0 을 줘도 그냥 뒤로 밀린다. WP39 의 3 초 정차가 그렇다.
+// AUTO 능동 제동은 '0 이 아닌 반대 부호 목표' 에서만 걸리므로 목표 0 인
+// 정차에는 아무 것도 걸리지 않는다.
+//
+// 그래서 'H' 명령으로 들어오는 미션 정차에서는, 굴러가는 것이 감지되면
+// 굴러가는 반대 방향으로 '밀리는 속도에 비례한' duty 를 준다.
+//   duty = HOLD_MIN_PWM + HOLD_GAIN * (|속도| - HOLD_DEADBAND_KMH)
+//
+// 기준점: 1.0 km/h 에서 65 가 되도록 맞췄다. 65 는 AUTO/MANUAL 능동
+// 제동에서 이미 실차로 검증된 역토크 duty 다.
+//   0.3 km/h -> 30,  0.5 -> 40,  1.0 -> 65,  1.5 이상 -> 90 포화
+//
+// 불감대 0.3 km/h 는 두 가지 이유로 필요하다.
+//   1) 엔코더 분해능. 149.8 counts/rev, 둘레 0.848 m, 100 ms 주기이므로
+//      1 카운트가 약 0.204 km/h 다. 그 아래는 측정 자체가 안 된다.
+//   2) 히스테리시스. 불감대가 없으면 되민 뒤 반대로 또 걸려 진동한다.
+//
+// 이것은 완화책이지 브레이크가 아니다. 밀린 것을 감지해서 되미는
+// 래칫 방식이므로 밀림을 0 으로 만들지는 못하고 제한할 뿐이다.
+// 확실한 밀림 방지가 필요하면 기계/전자 브레이크가 별도로 필요하다.
+// ------------------------------------------------------------
+const float HOLD_DEADBAND_KMH = 0.3;
+const int   HOLD_MIN_PWM      = 30;
+const float HOLD_GAIN         = 50.0;   // km/h 당 duty
+const int   HOLD_MAX_PWM      = 90;
+
+// ------------------------------------------------------------
+// 주행 중 제동 구간
+//
+// 위 곡선은 경사 밀림(저속)용이라 2 km/h 부터 90 에서 포화된다. 그러면
+// 8 km/h 로 굴러오는 차를 세울 때도 2 km/h 와 같은 힘밖에 못 준다.
+// 신호등 적색 정지에서 정지선을 넘는다.
+//
+// HOLD_PULSE_ABOVE_KMH 위에서는 속도에 비례해 더 세게 건다. 경계에서
+// 끊기지 않도록 그 지점의 저속 곡선 값(90)에서 이어 붙인다.
+//   duty = 90 + HOLD_BRAKE_GAIN * (|속도| - HOLD_PULSE_ABOVE_KMH)
+//   1.5 km/h -> 90,  2 -> 96,  4 -> 117,  8 -> 160 포화
+//
+// 이 구간은 AUTO_BRAKE 와 같이 끊어 건다. 역토크는 스톨보다 전류가 크다.
+// ON 250 ms / OFF 150 ms 로 평균 전류를 낮춘다. MDD20A 는 채널당 연속
+// 20 A 이고 구동모터 스톨 전류는 아직 미확인이다.
+// ------------------------------------------------------------
+const float HOLD_PULSE_ABOVE_KMH = 1.5;
+const float HOLD_BRAKE_GAIN      = 11.0;  // km/h 당 duty
+const int   HOLD_BRAKE_MAX_PWM   = 160;
+const unsigned long HOLD_BRAKE_ON_MS  = 250;
+const unsigned long HOLD_BRAKE_OFF_MS = 150;
+// 연속 홀드 상한. 스톨 토크를 무한정 물리지 않는다. MDD20A 는 채널당
+// 연속 20 A 이고 구동모터 스톨 전류는 아직 미확인이다.
+const unsigned long HOLD_MAX_MS = 10000;
+// 홀드 자체의 워치독. ROS 는 홀드 중 매 제어주기 H 를 보낸다. 그것이
+// 끊기면 홀드도 놓는다. 다른 모든 경로와 같은 원칙이다.
+const unsigned long HOLD_REFRESH_MS = 500;
+
+bool missionHoldActive = false;
+unsigned long missionHoldStartMs = 0;
+unsigned long missionHoldRefreshMs = 0;
+
+// 피드포워드. duty = FF_OFFSET + FF_GAIN * |목표 km/h|
+// [2026-08-27 지면 부하 실측]
+//   PWM 10 -> 약 0.20 km/h
+//   PWM 15 -> 약 0.48 km/h
+// 두 점의 직선식으로 계산:
+//   gain   = (15-10) / (0.48-0.20) = 17.86
+//   offset = 10 - 17.86*0.20       = 6.43
+const float FF_OFFSET = 6.4;
+const float FF_GAIN   = 17.9;
+
+// MANUAL은 기존 실차 확인값을 유지한다. AUTO 5 km/h에서는 피드포워드가
+// 대부분의 출력을 담당하고 PI는 오차만 보정하도록 게인을 낮춘다.
+const float MANUAL_KP = 22.0;
+const float MANUAL_KI = 8.0;
+const float AUTO_KP = 20.0;
+const float AUTO_KI = 5.0;
+const float MANUAL_INTEGRAL_LIMIT = 20.0;
+const float AUTO_INTEGRAL_LIMIT = 10.0;
+
+float integral = 0.0;
+
+// [2026-08-27 실차 확인] p5에서도 구동모터가 연속 회전한다.
+// 예전 45는 0.3 km/h 목표에서도 약 2 km/h까지 가속시켜
+// PWM 45/0 펄스 구동을 만들었으므로 실측 최소값 5로 낮춘다.
+const int DRIVE_MIN_PWM = 5;        // 구동할 때의 최소 duty
+const int DRIVE_MAX_PWM = 200;
+
+int requestedDrivePWM = 0;
+int drivePWMValue     = 0;
+
+byte currentDriveDir = DRIVE_FORWARD_DIR;
+
+
+// ============================================================
+// 워치독 / 래치
+// ============================================================
+
+// [2026-08-27 지면 부하 단거리 시험]
+// 단발 시리얼 명령 후 관찰 시간을 확보하되, 통신이 끊기면 3초 안에 정지한다.
+const unsigned long CMD_TIMEOUT_MS = 3000;
+
+unsigned long lastCommandTime = 0;
+bool watchdogEnabled = true;
+
+bool steerFaultLatched = false;
+bool steerStallLatched = false;
+
+
+// 구동 개루프 (10.3 FF 실측용)
+bool openLoopMode = false;
+int  openLoopDuty = 0;
+
+// 조향 개루프 (STEER_MIN_PWM 탐색용)
+// 부호가 방향, 크기가 duty. 소프트 리밋과 폴트는 그대로 적용된다.
+bool steerOpenLoop     = false;
+int  steerOpenLoopDuty = 0;
+
+
+// ============================================================
+// 주기
+// ============================================================
+
+const unsigned long SPEED_INTERVAL = 100;
+const unsigned long PRINT_INTERVAL = 200;
+
+unsigned long previousSpeedTime = 0;
+unsigned long previousPrintTime = 0;
+
+
+// ============================================================
+// 시리얼 입력 버퍼 (비블로킹)
+//
+// [변경] Serial.parseFloat() 는 종결 문자가 없으면 최대 1초
+//        블로킹한다. 그동안 조향 제어까지 멈춘다.
+// ============================================================
+
+char cmdBuffer[16];
+byte cmdLength = 0;
+
+
+// 함수 원형. Arduino IDE와 명령행 AVR 빌드 양쪽에서 동일하게 컴파일한다.
+void readSerialCommand();
+void handleCommand(char *s);
+void readRemoteReport(unsigned long now);
+void selectControlCommand(unsigned long now);
+void emergencyStopDrive();
+void steeringControl(unsigned long now);
+void driveControl(float dt);
+void printStatus();
+
+
+// ============================================================
+// 엔코더 ISR   (A상 CHANGE, 2체배)
+//
+// CHANGE 라 A의 상승/하강 양쪽에서 들어온다.
+// A == B 인지로 방향을 판별하면 두 엣지 모두에서 일관된다.
+// ============================================================
+
+void encoderISR()
+{
+  bool a = digitalRead(ENCODER_A);
+  bool b = digitalRead(ENCODER_B);
+
+  if (a == b)
+  {
+    encoderCount--;
+  }
+  else
+  {
+    encoderCount++;
+  }
+}
+
+
+// D8 = PB0 = PCINT0. 상승 시각을 저장하고 하강 시 HIGH 펄스폭을 만든다.
+ISR(PCINT0_vect)
+{
+  unsigned long nowUs = micros();
+
+  if (PINB & _BV(PB0))
+  {
+    pixhawkRiseUs = nowUs;
+  }
+  else
+  {
+    unsigned long widthUs = nowUs - pixhawkRiseUs;
+
+    if (widthUs >= PIXHAWK_PWM_VALID_MIN &&
+        widthUs <= PIXHAWK_PWM_VALID_MAX)
+    {
+      pixhawkPulseUs       = (unsigned int)widthUs;
+      pixhawkLastUpdateUs = nowUs;
+    }
+  }
+}
+
+
+bool readPixhawkPwm(unsigned int &pulseUs)
+{
+  unsigned long lastUpdateUs;
+
+  noInterrupts();
+  pulseUs     = pixhawkPulseUs;
+  lastUpdateUs = pixhawkLastUpdateUs;
+  interrupts();
+
+  if (lastUpdateUs == 0)
+  {
+    return false;
+  }
+
+  return (micros() - lastUpdateUs) <= PIXHAWK_PWM_TIMEOUT_US;
+}
+
+
+int pixhawkPwmToTargetPot(unsigned int pulseUs)
+{
+  long limited = constrain((long)pulseUs,
+                           PIXHAWK_PWM_MIN_US,
+                           PIXHAWK_PWM_MAX_US);
+
+  if (limited <= PIXHAWK_PWM_CENTER_US)
+  {
+    return (int)map(limited,
+                    PIXHAWK_PWM_MIN_US, PIXHAWK_PWM_CENTER_US,
+                    POT_SOFT_MIN,       POT_AT_CENTER);
+  }
+
+  return (int)map(limited,
+                  PIXHAWK_PWM_CENTER_US, PIXHAWK_PWM_MAX_US,
+                  POT_AT_CENTER,         POT_SOFT_MAX);
+}
+
+
+byte remoteChecksum(const RemoteReport &value)
+{
+  const byte *bytes = reinterpret_cast<const byte *>(&value);
+  byte checksum = 0;
+  for (size_t i = 0; i < sizeof(RemoteReport) - 1; ++i)
+  {
+    checksum ^= bytes[i];
+  }
+  return checksum;
+}
+
+
+// 감속 램프와 PI를 우회하는 구동 급정지 공통 함수.
+// PWM/DIR 방식 모터드라이버에서 PWM=0으로 즉시 출력을 차단한다.
+void emergencyStopDrive()
+{
+  commandSpeedKmh = 0.0;
+  rampedSpeedKmh = 0.0;
+  integral = 0.0;
+  openLoopMode = false;
+  openLoopDuty = 0;
+  requestedDrivePWM = 0;
+  drivePWMValue = 0;
+  // 안전이 우선이다. 수신 두절/모드 전환/E-stop 은 미션 홀드를 해제한다.
+  // ROS 가 다음 틱에 H 를 다시 보내더라도 driveControl 의 holdAvailable
+  // 게이트가 막으므로 실제 토크는 나가지 않는다.
+  missionHoldActive = false;
+  analogWrite(DRIVE_PWM, 0);
+}
+
+
+void readRemoteReport(unsigned long now)
+{
+  if (now - lastRemotePollMs < REMOTE_POLL_MS)
+  {
+    if (now - lastRemoteUpdateMs > REMOTE_TIMEOUT_MS)
+    {
+      remoteControlValid = false;
+    }
+    return;
+  }
+  lastRemotePollMs = now;
+
+  RemoteReport next;
+  byte *destination = reinterpret_cast<byte *>(&next);
+  byte received = Wire.requestFrom(
+    (int)REMOTE_I2C_ADDRESS, (int)sizeof(RemoteReport));
+
+  if (received != sizeof(RemoteReport))
+  {
+    while (Wire.available()) Wire.read();
+    if (now - lastRemoteUpdateMs > REMOTE_TIMEOUT_MS)
+    {
+      remoteControlValid = false;
+    }
+    return;
+  }
+
+  for (size_t i = 0; i < sizeof(RemoteReport); ++i)
+  {
+    if (!Wire.available())
+    {
+      if (now - lastRemoteUpdateMs > REMOTE_TIMEOUT_MS)
+      {
+        remoteControlValid = false;
+      }
+      return;
+    }
+    destination[i] = (byte)Wire.read();
+  }
+
+  const bool headerValid =
+    next.magic == REMOTE_REPORT_MAGIC
+    && next.version == REMOTE_REPORT_VERSION;
+  const bool checksumValid = next.checksum == remoteChecksum(next);
+  const bool modeValid = (next.flags & REMOTE_FLAG_MODE_VALID) != 0;
+
+  if (!headerValid || !checksumValid || !next.connected || !modeValid)
+  {
+    // 단일 깨진 I2C 프레임은 무시한다. 즉시 RC:LOST로 바꾸면
+    // 주행 중 PWM이 끊기고 MANUAL 중립 래치가 걸릴 수 있다.
+    if (now - lastRemoteUpdateMs > REMOTE_TIMEOUT_MS)
+    {
+      remoteControlValid = false;
+    }
+    return;
+  }
+
+  // 같은 보고서만 반복되면 보조 보드가 멈춘 것으로 보고 timeout 처리한다.
+  if (!remoteSequenceSeen || next.sequence != remoteSequence)
+  {
+    remoteSequenceSeen = true;
+    remoteSequence = next.sequence;
+    lastRemoteUpdateMs = now;
+  }
+
+  remoteAutoMode = (next.flags & REMOTE_FLAG_AUTO) != 0;
+  remoteThrottleCommand = constrain((int)next.throttleCommand, -100, 100);
+  remoteSteeringCommand = constrain((int)next.steeringCommand, -100, 100);
+  remoteThrottleRaw = next.throttleRaw;
+  remoteSteeringRaw = next.steeringRaw;
+  remoteControlValid = (now - lastRemoteUpdateMs <= REMOTE_TIMEOUT_MS);
+}
+
+
+void selectControlCommand(unsigned long now)
+{
+  static bool previousValid = false;
+  static bool previousAuto = false;
+
+  const bool modeChanged =
+    previousValid != remoteControlValid
+    || (remoteControlValid && previousAuto != remoteAutoMode);
+
+  if (modeChanged)
+  {
+    // AUTO/MANUAL/신호단절 전환은 감속 램프를 우회해 즉시 PWM을 끈다.
+    emergencyStopDrive();
+    modeChangeStopUntilMs = now + MODE_CHANGE_STOP_MS;
+
+    // MANUAL 진입 때 스로틀이 이미 당겨져 있으면 갑자기 출발하지 않는다.
+    manualNeutralRequired = remoteControlValid && !remoteAutoMode;
+  }
+
+  // 리시버 또는 보조 Arduino 통신이 끊긴 동안에는 매 loop마다
+  // 급정지 출력을 재적용한다. 개루프/시리얼 명령도 이를 우회할 수 없다.
+  receiverFailsafeActive = !remoteControlValid;
+  if (receiverFailsafeActive)
+  {
+    emergencyStopDrive();
+  }
+
+  if (remoteControlValid && !remoteAutoMode
+      && abs(remoteThrottleCommand) <= MANUAL_REARM_DEADBAND)
+  {
+    manualNeutralRequired = false;
+  }
+
+  const bool transitionStop =
+    (long)(modeChangeStopUntilMs - now) > 0;
+
+  if (!remoteControlValid || transitionStop
+      || (!remoteAutoMode && manualNeutralRequired))
+  {
+    commandSpeedKmh = 0.0;
+  }
+  else if (remoteAutoMode)
+  {
+    commandSpeedKmh = serialCommandSpeedKmh;
+  }
+  else
+  {
+    commandSpeedKmh =
+      ((float)remoteThrottleCommand / 100.0) * MAX_SPEED_KMH;
+    // A live MANUAL report is itself the command watchdog.
+    lastCommandTime = now;
+  }
+
+  previousValid = remoteControlValid;
+  previousAuto = remoteAutoMode;
+}
+
+
+// ============================================================
+// SETUP
+// ============================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // POT_AT_CENTER 는 이 변수 선언보다 아래에 정의되므로 여기서 대입한다.
+  // 이렇게 두지 않으면 RC 신호가 붙기 전까지 상태 줄의 SteerTarget 이
+  // 옛 중앙값을 계속 보여준다.
+  currentSteerTarget = POT_AT_CENTER;
+
+  pinMode(ENCODER_A, INPUT_PULLUP);
+  pinMode(ENCODER_B, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENCODER_A), encoderISR, CHANGE);
+
+  pinMode(STEER_DIR, OUTPUT);
+  pinMode(STEER_PWM, OUTPUT);
+  analogWrite(STEER_PWM, 0);
+
+  pinMode(DRIVE_DIR, OUTPUT);
+  pinMode(DRIVE_PWM, OUTPUT);
+  digitalWrite(DRIVE_DIR, DRIVE_FORWARD_DIR);
+  analogWrite(DRIVE_PWM, 0);
+
+  pinMode(PIXHAWK_PWM, INPUT);
+
+  // A4/A5를 I2C master로 사용해 보조 RC Arduino(0x12)를 읽는다.
+  Wire.begin();
+
+  // D8(PB0/PCINT0) 핀 체인지 인터럽트 활성화.
+  PCIFR  |= _BV(PCIF0);    // 남아 있는 인터럽트 플래그 제거
+  PCMSK0 |= _BV(PCINT0);   // D8만 감시
+  PCICR  |= _BV(PCIE0);    // PORT B 핀 체인지 인터럽트 허용
+
+
+  // ----------------------------------------------------------
+  // Timer1 PWM 주파수 -> 약 3.9kHz
+  //
+  // D9(조향) / D10(구동) 이 같은 Timer1 이라 한 줄로 둘 다 잡힌다.
+  // 기본값 488Hz 는 모터에서 가청소음이 난다.
+  // 0x01 은 31.25kHz 인데 MD20A/MDD20A 상한 20kHz 를 넘는다.
+  // millis() 는 Timer0 이라 영향 없다.
+  // ----------------------------------------------------------
+  TCCR1B = (TCCR1B & 0b11111000) | 0x02;
+
+
+  unsigned long now = millis();
+
+  previousSpeedTime = now;
+  previousPrintTime = now;
+  lastCommandTime   = now;
+
+
+  Serial.println();
+  Serial.println("==========================================");
+  Serial.println("T870 Steering + Drive");
+  Serial.println("==========================================");
+  Serial.print  ("Steer center = ");
+  Serial.println(POT_AT_CENTER);
+  Serial.print  ("Soft limit   = ");
+  Serial.print  (POT_SOFT_MIN);
+  Serial.print  (" ~ ");
+  Serial.println(POT_SOFT_MAX);
+  Serial.print  ("Max speed    = ");
+  Serial.print  (MAX_SPEED_KMH, 1);
+  Serial.println(" km/h");
+  Serial.println();
+  Serial.println("Serial Monitor line ending must be 'Newline'.");
+  Serial.println("cmd: <speed> | e(emergency stop) | p<duty> | s<duty> | b | r");
+  Serial.println();
+}
+
+
+// ============================================================
+// LOOP
+// ============================================================
+
+void loop()
+{
+  readSerialCommand();
+
+  unsigned long now = millis();
+
+  readRemoteReport(now);
+
+
+  // 명령 워치독. 문서 9.2(3)
+  // 노트북이 죽거나 USB 가 빠져도 마지막 명령으로 계속 달리는 것을 막는다.
+  if (watchdogEnabled && remoteAutoMode
+      && (now - lastCommandTime > CMD_TIMEOUT_MS))
+  {
+    serialCommandSpeedKmh = 0.0;
+    openLoopMode    = false;
+    steerOpenLoop   = false;
+  }
+
+  selectControlCommand(now);
+
+
+  steeringControl(now);
+
+
+  if (now - previousSpeedTime >= SPEED_INTERVAL)
+  {
+    float dt = (now - previousSpeedTime) / 1000.0;
+    previousSpeedTime = now;
+
+    driveControl(dt);
+  }
+
+
+  if (now - previousPrintTime >= PRINT_INTERVAL)
+  {
+    previousPrintTime = now;
+
+    printStatus();
+  }
+}
+
+
+// ============================================================
+// 시리얼 명령 (비블로킹)
+// ============================================================
+
+void readSerialCommand()
+{
+  while (Serial.available() > 0)
+  {
+    char c = Serial.read();
+
+    if (c == '\n' || c == '\r')
+    {
+      if (cmdLength > 0)
+      {
+        cmdBuffer[cmdLength] = '\0';
+        handleCommand(cmdBuffer);
+        cmdLength = 0;
+      }
+    }
+    else if (cmdLength < sizeof(cmdBuffer) - 1)
+    {
+      cmdBuffer[cmdLength++] = c;
+    }
+  }
+}
+
+
+void handleCommand(char *s)
+{
+  lastCommandTime = millis();
+
+
+  // ---- 비상정지 ----
+  // 일반 0 km/h 명령은 승차감을 위한 DECEL_RATE 램프를 사용하지만,
+  // E-stop은 램프와 PI 적분을 우회해 구동 PWM을 즉시 차단한다.
+  if ((s[0] == 'e' || s[0] == 'E') && s[1] == '\0')
+  {
+    serialCommandSpeedKmh = 0.0;
+
+    // 물리 RC MANUAL에서는 ROS 노드가 보내는 E가 반복되어도 RC 구동
+    // 램프와 PI를 리셋하지 않는다. AUTO로 전환하면 저장된 0 목표와
+    // 이후의 E가 즉시 적용된다.
+    if (!remoteControlValid || remoteAutoMode)
+    {
+      emergencyStopDrive();
+      Serial.println("EMERGENCY STOP");
+    }
+    return;
+  }
+
+
+  // ---- 미션 홀드 ----
+  // 대회 규정 정차(WP39 오르막)처럼 '거기 서 있어야 하는' 정지다.
+  // E 와 달리 구동을 완전히 놓지 않고, 밀리면 밀리는 반대로 되민다.
+  // 안전 E-stop 과 방향전환 E-stop 은 계속 E 를 쓴다. 섞으면 안 된다.
+  if ((s[0] == 'h' || s[0] == 'H') && s[1] == '\0')
+  {
+    serialCommandSpeedKmh = 0.0;
+
+    if (!remoteControlValid || remoteAutoMode)
+    {
+      missionHoldRefreshMs = millis();
+      if (!missionHoldActive)
+      {
+        missionHoldActive = true;
+        missionHoldStartMs = missionHoldRefreshMs;
+        rampedSpeedKmh = 0.0;
+        integral = 0.0;
+        openLoopMode = false;
+        openLoopDuty = 0;
+        Serial.println("MISSION HOLD");
+      }
+    }
+    return;
+  }
+
+
+  // ---- 워치독 토글 (벤치 테스트용) ----
+  if (s[0] == 'b' || s[0] == 'B')
+  {
+    watchdogEnabled = !watchdogEnabled;
+
+    Serial.print("WATCHDOG ");
+    Serial.println(watchdogEnabled ? "ON" : "OFF");
+    return;
+  }
+
+
+  // ---- 래치 해제 ----
+  if (s[0] == 'r' || s[0] == 'R')
+  {
+    steerFaultLatched = false;
+    steerStallLatched = false;
+
+    Serial.println("LATCH CLEARED");
+    return;
+  }
+
+
+  // ---- 조향 개루프 (STEER_MIN_PWM 탐색용) ----
+  if (s[0] == 's' || s[0] == 'S')
+  {
+    steerOpenLoopDuty = constrain(atoi(s + 1), -255, 255);
+    steerOpenLoop     = (steerOpenLoopDuty != 0);
+
+    Serial.print("STEER OPEN LOOP duty = ");
+    Serial.println(steerOpenLoopDuty);
+    return;
+  }
+
+
+  // ---- 구동 개루프 duty 인가 (문서 10.3) ----
+  if (s[0] == 'p' || s[0] == 'P')
+  {
+    openLoopMode = true;
+    openLoopDuty = constrain(atoi(s + 1), 0, DRIVE_MAX_PWM);
+
+    integral        = 0.0;
+    commandSpeedKmh = 0.0;
+    serialCommandSpeedKmh = 0.0;
+    rampedSpeedKmh  = 0.0;
+
+    Serial.print("OPEN LOOP duty = ");
+    Serial.println(openLoopDuty);
+    return;
+  }
+
+
+  // ---- 목표 속도 ----
+  if (!(isDigit(s[0]) || s[0] == '-' || s[0] == '+' || s[0] == '.'))
+  {
+    Serial.println("? unknown cmd");
+    return;
+  }
+
+  float v = atof(s);
+  v = constrain(v, -MAX_SPEED_KMH, MAX_SPEED_KMH);
+
+  openLoopMode = false;
+  // 0 이 아닌 새 목표 속도가 들어오면 미션 홀드는 끝난 것이다.
+  // 0 명령으로는 풀지 않는다. ROS 브리지는 구 펌웨어 호환을 위해
+  // 홀드 중에도 '0.000' 을 먼저 보내고 H 를 보내기 때문이다. 여기서
+  // 풀어 버리면 매 틱 홀드가 재무장되어 HOLD_MAX_MS 가 무의미해진다.
+  if (fabs(v) >= STOP_THRESHOLD_KMH)
+  {
+    missionHoldActive = false;
+  }
+
+  // [변경] 목표가 실제로 바뀔 때만 적분을 리셋한다.
+  //        기존처럼 명령마다 리셋하면, ROS 브리지가 10~20Hz 로
+  //        같은 목표를 계속 보낼 때 적분이 매번 0이 되어
+  //        사실상 P 제어가 되어버린다.
+  if (remoteAutoMode && fabs(v - serialCommandSpeedKmh) > 0.01)
+  {
+    integral = 0.0;
+  }
+
+  serialCommandSpeedKmh = v;
+
+  Serial.print("TARGET = ");
+  Serial.print(serialCommandSpeedKmh, 2);
+  Serial.println(" km/h");
+}
+
+
+// ============================================================
+// 조향 위치 제어
+//
+// 목표는 현재 중앙 고정이다.
+// Pixhawk PWM 캡처(D8)가 붙으면 targetPot 만 바뀌고
+// 나머지 로직은 그대로 쓴다.
+// ============================================================
+
+void steeringControl(unsigned long now)
+{
+  static byte          faultCount    = 0;
+  static int           stallLastPot  = 0;
+  static unsigned long stallLastTime = 0;
+
+  int potValue = analogRead(STEER_POT);
+
+
+  // ----------------------------------------------------------
+  // 센서 고장 판정. 문서 9.1(1)
+  //
+  // 와이퍼가 끊기면 ADC 가 0 으로 떨어진다. 이 검사가 없으면
+  // error 가 최대로 잡혀 조향 모터를 MAX_PWM 으로 한쪽 끝까지
+  // 밀어붙인 채 영원히 멈추지 않는다.
+  // ----------------------------------------------------------
+  if (potValue < STEER_FAULT_LOW || potValue > STEER_FAULT_HIGH)
+  {
+    if (faultCount < STEER_FAULT_COUNT)
+    {
+      faultCount++;
+    }
+
+    if (faultCount >= STEER_FAULT_COUNT)
+    {
+      steerFaultLatched = true;
+    }
+  }
+  else
+  {
+    faultCount = 0;
+  }
+
+
+  if (steerFaultLatched || steerStallLatched)
+  {
+    analogWrite(STEER_PWM, 0);
+
+    stallLastPot  = potValue;
+    stallLastTime = now;
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // 조향 개루프
+  //
+  // 최소 구동 duty 를 찾을 때 쓴다. 일부러 안 도는 duty 를 넣어보는
+  // 용도라 스톨 판정은 적용하지 않는다. 소프트 리밋과 폴트는 그대로다.
+  // 워치독이 켜져 있으면 1.5초 뒤 자동 해제된다.
+  // ----------------------------------------------------------
+  if (steerOpenLoop)
+  {
+    byte openDir  = (steerOpenLoopDuty >= 0) ? STEER_DIR_POT_UP : STEER_DIR_POT_DOWN;
+    int  openDuty = abs(steerOpenLoopDuty);
+
+    if ((openDir == STEER_DIR_POT_UP   && potValue >= POT_SOFT_MAX) ||
+        (openDir == STEER_DIR_POT_DOWN && potValue <= POT_SOFT_MIN))
+    {
+      analogWrite(STEER_PWM, 0);
+    }
+    else
+    {
+      digitalWrite(STEER_DIR, openDir);
+      analogWrite(STEER_PWM, openDuty);
+    }
+
+    stallLastPot  = potValue;
+    stallLastTime = now;
+    return;
+  }
+
+
+  // 리시버 또는 Arduino 간 통신이 끊기면 모드를 추측하지 않고 정지한다.
+  if (!remoteControlValid)
+  {
+    analogWrite(STEER_PWM, 0);
+
+    stallLastPot  = potValue;
+    stallLastTime = now;
+    return;
+  }
+
+  int targetPot;
+
+  if (remoteAutoMode)
+  {
+    // AUTO: 기존 Pixhawk 목표 조향각을 사용한다.
+    // 유효 PWM이 없거나 150ms 이상 끊기면 정지한다.
+    unsigned int pwmUs;
+    pixhawkPwmValid = readPixhawkPwm(pwmUs);
+    currentPixhawkPwmUs = pwmUs;
+
+    if (!pixhawkPwmValid)
+    {
+      analogWrite(STEER_PWM, 0);
+
+      stallLastPot  = potValue;
+      stallLastTime = now;
+      return;
+    }
+
+    targetPot = pixhawkPwmToTargetPot(pwmUs);
+  }
+  else
+  {
+    // MANUAL: 보조 Arduino가 정규화한 -100..100 조향값을 POT 목표로 변환한다.
+    pixhawkPwmValid = false;
+    if (remoteSteeringCommand >= 0)
+    {
+      targetPot = (int)map(remoteSteeringCommand, 0, 100,
+                           POT_AT_CENTER, POT_SOFT_MAX);
+    }
+    else
+    {
+      targetPot = (int)map(remoteSteeringCommand, -100, 0,
+                           POT_SOFT_MIN, POT_AT_CENTER);
+    }
+  }
+
+  currentSteerTarget = targetPot;
+
+  int error    = targetPot - potValue;
+  int absError = abs(error);
+
+
+  // ---- 목표 도달 ----
+  if (absError <= STEER_DEADBAND)
+  {
+    analogWrite(STEER_PWM, 0);
+
+    stallLastPot  = potValue;
+    stallLastTime = now;
+    return;
+  }
+
+
+  // ---- 방향 ----
+  byte dir = (error > 0) ? STEER_DIR_POT_UP : STEER_DIR_POT_DOWN;
+
+
+  // ----------------------------------------------------------
+  // 소프트 리밋. 문서 9.1(2)
+  //
+  // "그 방향으로 더 나가려 할 때"만 막는다.
+  // 이미 리밋 밖에 있어도 중앙으로 돌아오는 것은 허용해야 한다.
+  // ----------------------------------------------------------
+  if ((dir == STEER_DIR_POT_UP   && potValue >= POT_SOFT_MAX) ||
+      (dir == STEER_DIR_POT_DOWN && potValue <= POT_SOFT_MIN))
+  {
+    analogWrite(STEER_PWM, 0);
+
+    stallLastPot  = potValue;
+    stallLastTime = now;
+    return;
+  }
+
+
+  // ---- 비례 제어 ----
+  int pwmValue;
+
+  if (absError >= STEER_SLOW_RANGE)
+  {
+    pwmValue = STEER_MAX_PWM;
+  }
+  else
+  {
+    pwmValue = map(absError,
+                   STEER_DEADBAND, STEER_SLOW_RANGE,
+                   STEER_MIN_PWM,  STEER_MAX_PWM);
+  }
+
+  pwmValue = constrain(pwmValue, STEER_MIN_PWM, STEER_MAX_PWM);
+
+
+  digitalWrite(STEER_DIR, dir);
+  analogWrite(STEER_PWM, pwmValue);
+
+
+  // ----------------------------------------------------------
+  // 스톨 보호. 문서 9.1(3)
+  //
+  // 구동 중인데 pot 이 STALL_MS 동안 STALL_DELTA 만큼도 안 변하면
+  // 링키지가 걸렸거나 포텐셔미터가 고장난 것이다.
+  // 그대로 두면 모터가 탄다. 'r' 로 해제한다.
+  // ----------------------------------------------------------
+  if (!ENABLE_STEER_STALL)
+  {
+    // 기능을 다시 켰을 때 과거 시간값 때문에 즉시 래치되지 않도록 한다.
+    stallLastPot  = potValue;
+    stallLastTime = now;
+  }
+  else if (abs(potValue - stallLastPot) >= STEER_STALL_DELTA)
+  {
+    stallLastPot  = potValue;
+    stallLastTime = now;
+  }
+  else if (now - stallLastTime > STEER_STALL_MS)
+  {
+    steerStallLatched = true;
+
+    analogWrite(STEER_PWM, 0);
+
+    Serial.println("!! STEER STALL LATCHED  ('r' to clear)");
+  }
+}
+
+
+// ============================================================
+// 구동 속도 PI 제어
+// ============================================================
+
+void driveControl(float dt)
+{
+  if (dt <= 0.0)
+  {
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // 속도 측정
+  //
+  // [변경] abs() 를 쓰지 않는다. 문서 9.2(5)
+  //        경사에서 뒤로 밀릴 때 전진 명령 중이면 실제로는 후진인데
+  //        abs() 를 쓰면 "전진 중"으로 읽어 PI 가 출력을 줄인다.
+  //        더 밀린다.
+  // ----------------------------------------------------------
+  noInterrupts();
+  long currentEncoderCount = encoderCount;
+  interrupts();
+
+  long countDifference = currentEncoderCount - previousEncoderCount;
+  previousEncoderCount = currentEncoderCount;
+  lastCountDifference  = countDifference;
+
+
+  float revolutions = (float)countDifference / COUNTS_PER_REV;
+  float distance    = revolutions * WHEEL_CIRCUMFERENCE;
+  float rawKmh      = (distance / dt) * 3.6 * ENCODER_SIGN;
+
+
+  // 이동평균. 문서 9.2(8)
+  speedBuffer[speedBufferIndex] = rawKmh;
+  speedBufferIndex = (speedBufferIndex + 1) % SPEED_FILTER_N;
+
+  float sum = 0.0;
+  for (byte i = 0; i < SPEED_FILTER_N; i++)
+  {
+    sum += speedBuffer[i];
+  }
+  actualSpeedKmh = sum / SPEED_FILTER_N;
+
+
+  // ----------------------------------------------------------
+  // MANUAL 반대 스로틀 능동 제동
+  // ----------------------------------------------------------
+  const bool manualDriveAvailable =
+    remoteControlValid && !remoteAutoMode && !manualNeutralRequired;
+  const bool manualThrottleNeutral =
+    abs(remoteThrottleCommand) <= MANUAL_REARM_DEADBAND;
+  const bool oppositeManualRequest =
+    manualDriveAvailable
+    && !manualThrottleNeutral
+    && fabs(actualSpeedKmh) >= MANUAL_BRAKE_TRIGGER_KMH
+    && commandSpeedKmh * actualSpeedKmh < 0.0;
+
+  // 중립으로 돌아왔거나 거의 정지했을 때 다음 제동 동작을 재무장한다.
+  if (!manualDriveAvailable || manualThrottleNeutral
+      || fabs(actualSpeedKmh) <= REVERSE_GUARD_KMH)
+  {
+    manualBrakeActive = false;
+    manualBrakeLatched = false;
+  }
+
+  if (oppositeManualRequest && !manualBrakeLatched)
+  {
+    manualBrakeActive = true;
+    manualBrakeLatched = true;
+    manualBrakeStartMs = millis();
+    rampedSpeedKmh = 0.0;
+    integral = 0.0;
+  }
+
+  if (manualBrakeActive)
+  {
+    if (millis() - manualBrakeStartMs < MANUAL_BRAKE_MS
+        && oppositeManualRequest)
+    {
+      // 요청 방향으로 제한된 PWM을 주면 현재 회전에 대한 역토크가 된다.
+      currentDriveDir =
+        (commandSpeedKmh >= 0.0) ? DRIVE_FORWARD_DIR : DRIVE_REVERSE_DIR;
+      digitalWrite(DRIVE_DIR, currentDriveDir);
+      requestedDrivePWM = MANUAL_BRAKE_PWM;
+      drivePWMValue = MANUAL_BRAKE_PWM;
+      analogWrite(DRIVE_PWM, drivePWMValue);
+      return;
+    }
+
+    manualBrakeActive = false;
+    requestedDrivePWM = 0;
+    drivePWMValue = 0;
+    analogWrite(DRIVE_PWM, 0);
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // 미션 홀드 (경사 밀림 방지)
+  //
+  // 'H' 로 들어온 규정 정차. 목표는 0 이지만 PWM 을 완전히 놓지 않고,
+  // 굴러가는 것이 감지되면 그 반대 방향으로 속도에 비례한 duty 를 준다.
+  // 상단 상수 블록의 설명 참조.
+  // ----------------------------------------------------------
+  if (missionHoldActive)
+  {
+    // 안전 게이트. 하나라도 어긋나면 토크를 주지 않고 PWM 을 끊는다.
+    // 수신 두절, MANUAL, 모드 전환 정지, 개루프 중에는 홀드하지 않는다.
+    const bool holdAvailable =
+      remoteControlValid
+      && remoteAutoMode
+      && !receiverFailsafeActive
+      && !openLoopMode
+      && (long)(modeChangeStopUntilMs - millis()) <= 0;
+
+    rampedSpeedKmh = 0.0;
+    integral = 0.0;
+
+    const float drift = fabs(actualSpeedKmh);
+    const bool holdExpired =
+      (millis() - missionHoldStartMs) > HOLD_MAX_MS;
+    // H 가 끊기면 홀드를 놓는다. ROS 나 USB 가 죽은 채로 토크를
+    // 물고 있으면 안 된다.
+    if ((millis() - missionHoldRefreshMs) > HOLD_REFRESH_MS)
+    {
+      missionHoldActive = false;
+    }
+
+    if (!missionHoldActive || !holdAvailable || holdExpired
+        || drift < HOLD_DEADBAND_KMH)
+    {
+      // 안 밀리고 있거나 홀드할 수 없는 상태다. 관성주행으로 둔다.
+      requestedDrivePWM = 0;
+      drivePWMValue = 0;
+      analogWrite(DRIVE_PWM, 0);
+      return;
+    }
+
+    int duty;
+    bool pulsed = false;
+    if (drift < HOLD_PULSE_ABOVE_KMH)
+    {
+      // 저속 밀림 방지. 연속으로 약하게 건다.
+      duty = HOLD_MIN_PWM + (int)(HOLD_GAIN * (drift - HOLD_DEADBAND_KMH));
+      duty = constrain(duty, HOLD_MIN_PWM, HOLD_MAX_PWM);
+    }
+    else
+    {
+      // 주행 중 제동. 속도에 비례해 더 세게, 대신 끊어 건다.
+      duty = HOLD_MAX_PWM
+        + (int)(HOLD_BRAKE_GAIN * (drift - HOLD_PULSE_ABOVE_KMH));
+      duty = constrain(duty, HOLD_MAX_PWM, HOLD_BRAKE_MAX_PWM);
+      pulsed = true;
+    }
+
+    if (pulsed)
+    {
+      // ON/OFF 주기 안에서 쉬는 구간이면 duty 0 으로 둔다.
+      const unsigned long period = HOLD_BRAKE_ON_MS + HOLD_BRAKE_OFF_MS;
+      if ((millis() - missionHoldStartMs) % period >= HOLD_BRAKE_ON_MS)
+      {
+        requestedDrivePWM = 0;
+        drivePWMValue = 0;
+        analogWrite(DRIVE_PWM, 0);
+        return;
+      }
+    }
+
+    // 굴러가는 반대 방향으로 민다. actualSpeedKmh 가 엔코더 부호를
+    // 따르는 값이라 전진 밀림/후진 밀림 양쪽 모두 성립한다.
+    currentDriveDir =
+      (actualSpeedKmh < 0.0) ? DRIVE_FORWARD_DIR : DRIVE_REVERSE_DIR;
+    digitalWrite(DRIVE_DIR, currentDriveDir);
+    requestedDrivePWM = duty;
+    drivePWMValue = duty;
+    analogWrite(DRIVE_PWM, duty);
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // AUTO 반대 명령 능동 제동
+  //
+  // follower 가 기어를 바꾸려 할 때 반대 부호 목표를 그대로 보낸다.
+  // duty 0 은 관성주행이라 몇 m 를 더 가므로 주차 조작이 성립하지 않는다.
+  // 여기서 제한된 역토크로 세운다. 세워지면 아래 역전 보호가 방향을
+  // 바꿔 준다.
+  // ----------------------------------------------------------
+  const bool autoDriveAvailable = remoteAutoMode && !openLoopMode;
+  const bool autoCommandNeutral =
+    fabs(serialCommandSpeedKmh) < STOP_THRESHOLD_KMH;
+  const bool oppositeAutoRequest =
+    autoDriveAvailable
+    && !autoCommandNeutral
+    && fabs(actualSpeedKmh) >= AUTO_BRAKE_TRIGGER_KMH
+    && serialCommandSpeedKmh * actualSpeedKmh < 0.0;
+
+  if (!oppositeAutoRequest)
+  {
+    autoBrakeActive = false;
+  }
+  else
+  {
+    const unsigned long nowMs = millis();
+    if (!autoBrakeActive && nowMs >= autoBrakeRestUntilMs)
+    {
+      autoBrakeActive = true;
+      autoBrakeStartMs = nowMs;
+      rampedSpeedKmh = 0.0;
+      integral = 0.0;
+    }
+    if (autoBrakeActive)
+    {
+      if (nowMs - autoBrakeStartMs < AUTO_BRAKE_MS)
+      {
+        // 목표 방향으로 제한된 duty 를 주면 현재 회전에 역토크가 된다.
+        currentDriveDir =
+          (serialCommandSpeedKmh >= 0.0) ? DRIVE_FORWARD_DIR : DRIVE_REVERSE_DIR;
+        digitalWrite(DRIVE_DIR, currentDriveDir);
+        requestedDrivePWM = AUTO_BRAKE_PWM;
+        drivePWMValue = AUTO_BRAKE_PWM;
+        analogWrite(DRIVE_PWM, drivePWMValue);
+        return;
+      }
+      autoBrakeActive = false;
+      autoBrakeRestUntilMs = nowMs + AUTO_BRAKE_GAP_MS;
+      if (fabs(actualSpeedKmh) <= REVERSE_GUARD_KMH)
+      {
+        // 섰다. 램프를 건너뛰고 목표 속도에서 바로 출발한다. 램프를
+        // 태우면 방향 전환 뒤 다시 0 에서 기어올라 반응이 굼뜬다.
+        rampedSpeedKmh = serialCommandSpeedKmh;
+        integral = 0.0;
+        autoBrakeRestUntilMs = 0;
+      }
+    }
+    // 쉬는 구간에서는 duty 0 으로 둔다.
+    requestedDrivePWM = 0;
+    drivePWMValue = 0;
+    analogWrite(DRIVE_PWM, 0);
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // 개루프 모드 (FF 실측용)
+  // ----------------------------------------------------------
+  if (openLoopMode)
+  {
+    digitalWrite(DRIVE_DIR, DRIVE_FORWARD_DIR);
+    currentDriveDir = DRIVE_FORWARD_DIR;
+
+    drivePWMValue     = openLoopDuty;
+    requestedDrivePWM = openLoopDuty;
+    integral          = 0.0;
+
+    analogWrite(DRIVE_PWM, drivePWMValue);
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // 속도 램프 (소프트 스타트)
+  // ----------------------------------------------------------
+  // 부호가 반대면 아직 0 을 향해 줄어드는 중이므로 항상 감속률을 쓴다.
+  bool speedingUp = (fabs(commandSpeedKmh) > fabs(rampedSpeedKmh)) &&
+                    (commandSpeedKmh * rampedSpeedKmh >= 0.0);
+
+  float step = (speedingUp ? ACCEL_RATE : DECEL_RATE) * dt;
+
+  if (rampedSpeedKmh < commandSpeedKmh)
+  {
+    rampedSpeedKmh = min(rampedSpeedKmh + step, commandSpeedKmh);
+  }
+  else if (rampedSpeedKmh > commandSpeedKmh)
+  {
+    rampedSpeedKmh = max(rampedSpeedKmh - step, commandSpeedKmh);
+  }
+
+
+  // ----------------------------------------------------------
+  // 방향 반전 보호. 문서 9.2(4)
+  //
+  // 굴러가는 중에 DIR 을 뒤집으면 역전 제동이 걸려 드라이버와
+  // 모터에 큰 전류가 흐른다. 일단 0 으로 감속하고, 선 다음에 반전한다.
+  // ----------------------------------------------------------
+  byte wantDir = (rampedSpeedKmh >= 0.0) ? DRIVE_FORWARD_DIR : DRIVE_REVERSE_DIR;
+
+  float effectiveTarget = fabs(rampedSpeedKmh);
+
+  if (wantDir != currentDriveDir)
+  {
+    if (fabs(actualSpeedKmh) > REVERSE_GUARD_KMH)
+    {
+      effectiveTarget = 0.0;      // 아직 구른다. 먼저 세운다.
+    }
+    else
+    {
+      currentDriveDir = wantDir;
+      digitalWrite(DRIVE_DIR, currentDriveDir);
+      integral = 0.0;
+    }
+  }
+
+
+  // ---- 정지 ----
+  if (effectiveTarget < STOP_THRESHOLD_KMH)
+  {
+    drivePWMValue     = 0;
+    requestedDrivePWM = 0;
+    integral          = 0.0;
+
+    analogWrite(DRIVE_PWM, 0);
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // PI + 피드포워드
+  //
+  // 진행 방향 기준 속도로 오차를 잡는다.
+  // 전진 명령 중에 뒤로 밀리면 speedAlongDir 이 음수가 되어
+  // 오차가 커지고, PI 가 더 밟는다. 이게 맞는 동작이다.
+  // ----------------------------------------------------------
+  float dirSign       = (currentDriveDir == DRIVE_FORWARD_DIR) ? 1.0 : -1.0;
+  float speedAlongDir = actualSpeedKmh * dirSign;
+
+  float error = effectiveTarget - speedAlongDir;
+
+  float ff = FF_OFFSET + FF_GAIN * effectiveTarget;
+
+
+  // 조건부 적분 (anti-windup). 문서 9.2(6)
+  // 적분을 더했을 때 출력이 포화되면 누적하지 않는다.
+  const float activeKp = remoteAutoMode ? AUTO_KP : MANUAL_KP;
+  const float activeKi = remoteAutoMode ? AUTO_KI : MANUAL_KI;
+  const float integralLimit = remoteAutoMode
+    ? AUTO_INTEGRAL_LIMIT : MANUAL_INTEGRAL_LIMIT;
+  float trialIntegral = constrain(
+    integral + error * dt, -integralLimit, integralLimit);
+  float control = ff + activeKp * error + activeKi * trialIntegral;
+
+  if (control > 0.0 && control < (float)DRIVE_MAX_PWM)
+  {
+    integral = trialIntegral;
+  }
+  else
+  {
+    control = ff + activeKp * error + activeKi * integral;
+  }
+
+
+  // 문서 9.2(7)
+  // 출력이 0 이하면 duty 0(관성주행)으로 둔다.
+  // 반대 방향 duty 를 주면 역전 제동이 된다.
+  if (control <= 0.0)
+  {
+    requestedDrivePWM = 0;
+  }
+  else
+  {
+    requestedDrivePWM = constrain((int)control, DRIVE_MIN_PWM, DRIVE_MAX_PWM);
+  }
+
+
+  drivePWMValue = requestedDrivePWM;
+
+  analogWrite(DRIVE_PWM, drivePWMValue);
+}
+
+
+// ============================================================
+// 상태 출력
+// ============================================================
+
+void printStatus()
+{
+  Serial.print("RC:");
+  if (!remoteControlValid)
+  {
+    Serial.print("LOST");
+  }
+  else
+  {
+    Serial.print(remoteAutoMode ? "AUTO" : "MANUAL");
+  }
+  Serial.print(" TH:");
+  Serial.print(remoteThrottleRaw);
+  Serial.print("/");
+  Serial.print(remoteThrottleCommand);
+  Serial.print(" ST:");
+  Serial.print(remoteSteeringRaw);
+  Serial.print("/");
+  Serial.print(remoteSteeringCommand);
+  Serial.print(" | ");
+
+  Serial.print("POT:");
+  Serial.print(analogRead(STEER_POT));
+
+  Serial.print(" | SteerPWM:");
+  if (pixhawkPwmValid)
+  {
+    Serial.print(currentPixhawkPwmUs);
+  }
+  else
+  {
+    Serial.print("LOST");
+  }
+
+  Serial.print(" | SteerTarget:");
+  Serial.print(currentSteerTarget);
+
+  Serial.print(" | Tgt:");
+  Serial.print(rampedSpeedKmh, 2);
+
+  Serial.print(" | Act:");
+  Serial.print(actualSpeedKmh, 2);
+
+  Serial.print(" | C/100ms:");
+  Serial.print(lastCountDifference);
+
+  Serial.print(" | Cnt:");
+  Serial.print(encoderCount);
+
+  Serial.print(" | PWM:");
+  Serial.print(drivePWMValue);
+
+  if (openLoopMode)      Serial.print(" | DRIVE-OPEN");
+  if (steerOpenLoop)     Serial.print(" | STEER-OPEN");
+  if (!watchdogEnabled)  Serial.print(" | WDOG-OFF");
+  if (steerFaultLatched) Serial.print(" | STEER-FAULT");
+  if (steerStallLatched) Serial.print(" | STEER-STALL");
+
+  Serial.println();
+}
