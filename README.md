@@ -201,7 +201,7 @@ PYTHONPATH=src/t870_control:$PYTHONPATH /usr/bin/python3 -m pytest src/t870_cont
 
 ```bash
 sudo apt install git-lfs && git lfs install
-git clone https://github.com/Sxx-xx/new.git && cd new
+git clone https://github.com/Sxx-xx/t870-autonomous-driving.git && cd t870-autonomous-driving
 
 source /opt/ros/jazzy/setup.bash
 colcon build --base-paths src/t870_control \
