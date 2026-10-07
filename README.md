@@ -100,8 +100,8 @@ flowchart LR
 | 4 | [`mission_mux_node.py`](src/t870_control/t870_control/mission_mux_node.py) → [`remote_mode_control_node.py`](src/t870_control/t870_control/remote_mode_control_node.py) → [`arduino_drive_node.py`](src/t870_control/t870_control/arduino_drive_node.py) → [`sketch_aug.ino`](sketch_aug/sketch_aug.ino) | 명령이 모터까지 가는 길. 우선순위 중재, AUTO/MANUAL 게이트, 시리얼, 펌웨어 순서다 |
 | 5 | [`src/t870_control/test/`](src/t870_control/test) | pytest 294개. 판단 로직이 어떤 조건을 보장하는지 가장 빨리 읽는 방법이다 |
 
-문서는 [`T870_COMPETITION_HANDOFF_2026-09-19.txt`](T870_COMPETITION_HANDOFF_2026-09-19.txt) 하나면 된다.
-나머지 `*.txt`는 그 문서로 정리되기 전의 날짜별 작업 기록이다. 전체 파일 지도는 [저장소 구조](#저장소-구조)에 있다.
+문서는 [`T870_COMPETITION_HANDOFF_2026-09-19.txt`](docs/notes/T870_COMPETITION_HANDOFF_2026-09-19.txt) 하나면 된다.
+나머지 `docs/notes/*.txt`는 그 문서로 정리되기 전의 날짜별 작업 기록이다. 전체 파일 지도는 [저장소 구조](#저장소-구조)에 있다.
 
 ## 미션
 
@@ -120,7 +120,7 @@ flowchart LR
 
 ## 문제 해결 기록
 
-코드보다 설명이 필요한 부분만 골랐다. 수치는 모두 작업 기록(`T870_COMPETITION_HANDOFF_2026-09-19.txt`)에 근거가 있다.
+코드보다 설명이 필요한 부분만 골랐다. 수치는 모두 작업 기록(`docs/notes/T870_COMPETITION_HANDOFF_2026-09-19.txt`)에 근거가 있다.
 
 ### 1. 외부 입력을 무시하는 차량: 구동 계층을 직접 만들다
 
@@ -222,7 +222,8 @@ colcon이 빌드하는 패키지는 `src/t870_control` 하나다.
 ├── traffic_calib/probe.py                 신호등 검출 필터 단계별 진단
 ├── path_*.py  rtk_*.py  scan_check.py  arduino_check.py  ubx_config.py
 │                                          경로 편집 · 센서 진단 CLI. 목록은 아래 "경로 · 진단 도구"
-└── docs/images/                           README 그림
+├── docs/images/                           README 그림
+└── docs/notes/                            작업 기록. 아래 "작업 기록" 참고
 ```
 
 노드 소스는 `src/t870_control/t870_control/`에 있다. 29개 중 대회 구성에서 도는 것만 계층별로 적었다.
@@ -256,7 +257,7 @@ colcon이 빌드하는 패키지는 `src/t870_control` 하나다.
 
 ### 작업 기록
 
-루트의 `*.txt`, `*.md`는 대회 준비 중 날짜별로 쓴 메모다. 코드를 이해하는 데는 필요 없고, 수치의 근거를 찾을 때 본다.
+`docs/notes/`의 `*.txt`, `*.md`는 대회 준비 중 날짜별로 쓴 메모다. 코드를 이해하는 데는 필요 없고, 수치의 근거를 찾을 때 본다.
 
 | 파일 | 내용 |
 | :--- | :--- |
