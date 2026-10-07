@@ -87,6 +87,22 @@ flowchart LR
 - **명령은 한 곳으로만 나간다.** 모든 미션 출력은 우선순위 Mux를 거친다(긴급정지 > 주차 > 회피 > 신호등 > GPS 추종). 미션 명령이 0.5초 끊기면 Mux가 속도 0을 낸다.
 - **사람이 항상 이긴다.** 최종 명령은 조종기의 AUTO/MANUAL 게이트를 통과해야 하고, 수신기가 끊기면 펌웨어가 구동을 차단한다.
 
+## 어디부터 보면 되나
+
+이 저장소는 ERP42용 ROS 1 워크스페이스에서 출발했고, 대회 준비 중 쓴 날짜별 메모도 그대로 남아 있다.
+그래서 파일 수에 비해 실제로 봐야 할 곳은 적다. 위 구조도를 코드로 확인하려면 아래 다섯 곳이면 된다.
+
+| 순서 | 위치 | 보이는 것 |
+| :-: | :--- | :--- |
+| 1 | [`t870_competition.launch.py`](src/t870_control/launch/t870_competition.launch.py) | 대회에서 실제로 뜨는 노드와 파라미터 전부. 구조도의 실체이고, 튜닝 수치마다 근거가 주석으로 달려 있다 |
+| 2 | [`competition_mission_manager_node.py`](src/t870_control/t870_control/competition_mission_manager_node.py) | 웨이포인트 번호로 미션을 켜고 끄는 상태기 |
+| 3 | [`gps_path_follower_node.py`](src/t870_control/t870_control/gps_path_follower_node.py) | Pure Pursuit 추종, 구간별 전방주시거리, GPS 점프 복구, 주행 중 경로 파일 교체 |
+| 4 | [`mission_mux_node.py`](src/t870_control/t870_control/mission_mux_node.py) → [`remote_mode_control_node.py`](src/t870_control/t870_control/remote_mode_control_node.py) → [`arduino_drive_node.py`](src/t870_control/t870_control/arduino_drive_node.py) → [`sketch_aug.ino`](sketch_aug/sketch_aug.ino) | 명령이 모터까지 가는 길. 우선순위 중재, AUTO/MANUAL 게이트, 시리얼, 펌웨어 순서다 |
+| 5 | [`src/t870_control/test/`](src/t870_control/test) | pytest 294개. 판단 로직이 어떤 조건을 보장하는지 가장 빨리 읽는 방법이다 |
+
+문서는 [`T870_COMPETITION_HANDOFF_2026-09-19.txt`](T870_COMPETITION_HANDOFF_2026-09-19.txt) 하나면 된다.
+나머지 `*.txt`는 그 문서로 정리되기 전의 날짜별 작업 기록이다. 전체 파일 지도는 [저장소 구조](#저장소-구조)에 있다.
+
 ## 미션
 
 | # | 미션 | 센서 | 동작 |
@@ -184,18 +200,74 @@ PYTHONPATH=src/t870_control:$PYTHONPATH /usr/bin/python3 -m pytest src/t870_cont
 
 ## 저장소 구조
 
+직접 작성한 코드, 이식 전 원본과 외부 패키지, 작업 기록이 한 저장소에 있다.
+colcon이 빌드하는 패키지는 `src/t870_control` 하나다.
+
+### 직접 작성한 것
+
 ```
 .
-├── run.sh / watch.sh / t870_cleanup.sh   실행, 주행 모니터, 노드 정리
-├── src/t870_control/        핵심 패키지: 노드 29개, launch, 설정, 테스트
-├── src/ma_rrt_path_plan/    LiDAR + IMU 기반 RRT 로컬 경로 계획
-├── gps_recordings/대회용/    대회 주행 경로 CSV 5개
-├── sketch_aug/              주 Arduino 펌웨어 (구동 + 조향)
-├── pwm_receiver_bridge/     RC 수신기 → I2C 브리지 펌웨어
-├── bev_calib/               카메라 BEV · ROI 캘리브레이션, 상태 대시보드
-├── path_*.py, rtk_*.py ...  경로 편집 · 센서 진단 도구
-└── *.txt, *.md              날짜별 작업 기록과 인수인계 문서
+├── run.sh / watch.sh / t870_cleanup.sh   한 명령 실행 · 주행 모니터 · 고아 노드 정리
+├── src/t870_control/                      핵심 ROS 2 패키지
+│   ├── launch/t870_competition.launch.py  대회 통합 launch. 진입점
+│   ├── launch/t870_*.launch.py            카메라 · GPS · 위치추정 · 주차 등 부분 launch
+│   ├── t870_control/*_node.py             노드 소스. 아래 표 참고
+│   ├── test/                              pytest 21개 파일, 294 케이스
+│   ├── config/                            EKF · navsat_transform · 카메라 설정
+│   └── tools/                             조향 한계각 피팅, 상대 경로 → WGS84 변환
+├── sketch_aug/sketch_aug.ino              주 Arduino 펌웨어. 속도 PI · 조향 위치 제어 · 홀드 토크 · 텔레메트리
+├── pwm_receiver_bridge/                   RC 수신기 PWM → I2C 브리지 펌웨어
+├── gps_recordings/대회용/                  대회 경로 CSV. 본선 T1, 주차 칸별 T2 · P1 · P2, 분기 OX_right
+├── bev_calib/                             BEV 호모그래피 · ROI 캘리브레이션, 주행 대시보드(dash.py)
+├── traffic_calib/probe.py                 신호등 검출 필터 단계별 진단
+├── path_*.py  rtk_*.py  scan_check.py  arduino_check.py  ubx_config.py
+│                                          경로 편집 · 센서 진단 CLI. 목록은 아래 "경로 · 진단 도구"
+└── docs/images/                           README 그림
 ```
+
+노드 소스는 `src/t870_control/t870_control/`에 있다. 29개 중 대회 구성에서 도는 것만 계층별로 적었다.
+
+| 계층 | 파일 | 역할 |
+| :--- | :--- | :--- |
+| 판단 | `competition_mission_manager_node.py` | 웨이포인트 기반 상태기. 미션 on/off, 속도 제한, 경로 전환 요청 |
+| 주행 | `gps_path_follower_node.py` | Pure Pursuit, 구간별 전방주시거리, GPS 점프 복구, 경로 CSV 교체 |
+| 미션 | `obstacle_avoidance_node.py` | 카메라 · LiDAR 정적 장애물 회피. 보정각 가산, 3 m 안에서 조향 인계 |
+| 미션 | `emergency_stop_node.py` | LiDAR 전방 섹터 동적 장애물 정지 후 복귀 |
+| 미션 | `parking_slot_selector_node.py`, `t_path_selector_node.py` | LiDAR로 빈 주차 칸 판단, 경로 파일 선택 |
+| 미션 | `traffic_light_camera_node.py`, `traffic_lamp.py`, `traffic_light_node.py` | 신호등 색 검출, 최빈값 판정, 정지선 정지 |
+| 미션 | `ox_signal_detector_node.py`, `finish_red_detector_node.py` | 적/녹 표지 좌우 판정, 종료 표지 검출 |
+| 중재 | `mission_mux_node.py` | 우선순위 Mux. 0.5초 무응답이면 속도 0 |
+| 구동 | `remote_mode_control_node.py` | 조종기 AUTO/MANUAL 게이트, 페일세이프 |
+| 구동 | `arduino_drive_node.py` | `/cmd_vel`을 시리얼로 보내고 100 ms 텔레메트리를 읽는다 |
+| 입력 | `webcam_pub_node.py`, `lidar_sector_filter_node.py`, `gps_path_recorder_node.py` | 카메라 2대 발행, LiDAR 섹터 필터, 경로 기록 |
+
+### 이식 전 원본과 외부 패키지
+
+읽지 않아도 된다. 지우지 않은 것은 이식 과정과 설계 변경의 출발점을 남기기 위해서다.
+
+| 위치 | 정체 |
+| :--- | :--- |
+| `src/t870_control/t870_control/erp42_planner_*.py`, `scripts/`, `path/` | ERP42 ROS 1 플래너와 당시 경로 파일. 이식 출발점 |
+| `pixhawk_vehicle_interface_node.py`, `pixhawk_*/` | Pixhawk로 조향 · 스로틀 PWM을 내던 첫 설계. [문제 해결 기록 1](#1-외부-입력을-무시하는-차량-구동-계층을-직접-만들다)에서 Arduino로 교체했고, 지금 Pixhawk는 MAVROS를 통해 IMU · 위치 입력만 준다 |
+| `src/t870_track/`, `src/ma_rrt_path_plan/`, `rrt_avoidance_mux_node.py` | 초기 LiDAR RRT 회피 시도. 대회 launch에서는 플래너를 끈다 |
+| `src/mavros`, `src/sllidar_ros2`, `src/ublox` 등 | 외부 패키지. 출처는 아래 표. `COLCON_IGNORE`가 있는 폴더는 빌드하지 않는다 |
+| `gps_recordings/*.csv` (`대회용` 제외) | 시험 주행 GPS 기록 |
+| `photo/`, `encoder_check/`, `ble_remote_bridge/` | 현장 사진, 엔코더 점검 스케치, BLE 조종 시도 |
+
+### 작업 기록
+
+루트의 `*.txt`, `*.md`는 대회 준비 중 날짜별로 쓴 메모다. 코드를 이해하는 데는 필요 없고, 수치의 근거를 찾을 때 본다.
+
+| 파일 | 내용 |
+| :--- | :--- |
+| `T870_COMPETITION_HANDOFF_2026-09-19.txt` | 대회 통합 작업 기록과 인수인계. 가장 최신이고 가장 완전하다 |
+| `T870_MISSIONS.md` | 미션 노드와 실행 인자 |
+| `t870_competition_notes.txt` | 대회 현장 메모 |
+| `t870_parking_notes.txt`, `t870_parallel_parking_notes.txt` | 주차 미션 |
+| `traffic_light_notes.txt` | 신호등 검출 |
+| `t870_actuator_redesign.txt` | 구동 · 조향 계통 재설계 |
+| `t870_migration_summary.txt` | ERP42 / ROS 1 → T870 / ROS 2 이식 정리 |
+| `t870_progress_*.txt` | 날짜별 작업 기록 |
 
 ## 빌드와 실행
 
@@ -234,22 +306,6 @@ colcon build --base-paths src/t870_control \
 | `scan_check.py` | 판정 지점에서 LiDAR에 보이는 물체의 각도 · 거리 측정 |
 | `arduino_check.py` | Arduino 텔레메트리로 구동이 끊긴 단계 진단 |
 | `traffic_calib/probe.py` | 신호등 후보가 어느 필터에서 탈락하는지 단계별 집계 |
-
-</details>
-
-<details>
-<summary><b>문서</b></summary>
-
-| 파일 | 내용 |
-| :--- | :--- |
-| `T870_COMPETITION_HANDOFF_2026-09-19.txt` | 대회 통합 작업 기록과 인수인계 (가장 최신) |
-| `t870_competition_notes.txt` | 대회 현장 메모 |
-| `T870_MISSIONS.md` | 미션 노드와 실행 인자 |
-| `t870_parking_notes.txt`, `t870_parallel_parking_notes.txt` | 주차 미션 |
-| `traffic_light_notes.txt` | 신호등 검출 |
-| `t870_actuator_redesign.txt` | 구동 · 조향 계통 재설계 |
-| `t870_migration_summary.txt` | ERP42 / ROS 1 → T870 / ROS 2 이식 정리 |
-| `t870_progress_*.txt` | 날짜별 작업 기록 |
 
 </details>
 
